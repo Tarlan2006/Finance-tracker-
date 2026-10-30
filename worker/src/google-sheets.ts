@@ -1,0 +1,59 @@
+import { AppError, clean, serialDate } from '../../shared/logic';
+import type { Category, ExpenseInput, Row, Snapshot, Summary } from '../../shared/types';
+import type { Env } from './env';
+import { GoogleAuth, retryFetch } from './google-auth';
+import type { SheetsAdapter } from './sheets';
+export const quoteSheet = (name: string) => `'${name.replace(/'/g, "''")}'`;
+export class GoogleSheetsAdapter implements SheetsAdapter {
+  private auth: GoogleAuth;
+  private categories?: { items: Category[]; until: number };
+  constructor(private env: Env, private fetcher: typeof fetch = fetch) { this.auth = new GoogleAuth(env.GOOGLE_SERVICE_ACCOUNT_JSON || '', fetcher); }
+  private async request(path: string, init: RequestInit = {}) {
+    if (!this.env.SHEET_ID) throw new AppError(503, 'configuration', 'SHEET_ID не настроен');
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.env.SHEET_ID)}/${path}`;
+    const call = async () => retryFetch(this.fetcher, url, { ...init, headers: { Authorization: `Bearer ${await this.auth.token()}`, 'Content-Type': 'application/json' } });
+    let response = await call();
+    if (response.status === 401) { this.auth.invalidate(); response = await call(); }
+    if (!response.ok) throw new AppError(503, 'sheets', 'Google Sheets недоступен. Проверьте доступ сервисного аккаунта и названия листов');
+    return response.json() as Promise<{ valueRanges?: { values?: Row[] }[] }>;
+  }
+  async read(): Promise<Snapshot> {
+    const needsDict = !this.categories || this.categories.until <= Date.now();
+    const ranges = [`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A:H`, `${quoteSheet(this.env.SHEET_NAME_INCOME)}!M3:S`];
+    if (needsDict) ranges.push(`${quoteSheet(this.env.SHEET_NAME_DICT)}!A3:B`);
+    const query = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
+    ranges.forEach(range => query.append('ranges', range));
+    const result = await this.request(`values:batchGet?${query}`);
+    const values = result.valueRanges || [];
+    if (needsDict) {
+      const items: Category[] = [];
+      for (const row of values[2]?.values || []) {
+        const name = clean(row[0]);
+        if (!name || /итого/i.test(name)) break;
+        const limit = Number(row[1]);
+        items.push({ name, limit: Number.isFinite(limit) && limit > 0 ? limit : 0 });
+      }
+      if (!items.length) throw new AppError(422, 'categories', 'Справочник категорий пуст');
+      this.categories = { items, until: Date.now() + 300000 };
+    }
+    const summaries: Summary[] = (values[1]?.values || []).flatMap(row => {
+      const month = clean(row[0]);
+      if (!/^\d{4}-\d{2}$/.test(month)) return [];
+      // A missing/broken formula is not a legitimate zero income.
+      if (row.slice(1, 7).length < 6 || row.slice(1, 7).some(x => typeof x !== 'number' || !Number.isFinite(x))) return [];
+      return [{ month, income: Number(row[1]), fixed: Number(row[2]), journal: Number(row[3]), total: Number(row[4]), balance: Number(row[5]), savings: Number(row[6]) }];
+    });
+    return { rows: values[0]?.values || [], categories: this.categories!.items, summaries };
+  }
+  private ranges(row: number) {
+    if (!Number.isSafeInteger(row) || row < 2) throw new AppError(422, 'row', 'Нельзя менять заголовки');
+    const sheet = quoteSheet(this.env.SHEET_NAME_EXPENSES);
+    return [`${sheet}!A${row}:E${row}`, `${sheet}!G${row}:H${row}`];
+  }
+  async write(row: number, e: ExpenseInput) {
+    const [first, last] = this.ranges(row);
+    // RAW preserves text verbatim and the numeric Sheets date serial; never evaluates user strings.
+    await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: first, values: [[serialDate(e.date), e.name, e.category, e.amount, e.comment]] }, { range: last, values: [[e.id, e.source]] }] }) });
+  }
+  async clear(row: number) { await this.request('values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: this.ranges(row) }) }); }
+}
