@@ -9,19 +9,23 @@ import Overview from './Overview';
 import { dateLabel } from '../../../shared/dates';
 import { useVisualViewport } from '../lib/viewport';
 import { useDialog } from '../lib/dialog';
+import { storage } from '../lib/storage';
+import { readCachedBootstrap } from '../lib/data';
 const tabs = [{ name: 'Добавить', icon: '+' }, { name: 'Траты', icon: '≡' }, { name: 'Обзор', icon: '◔' }, { name: 'Ещё', icon: '···' }];
 function readDraft(): Draft { const p = new URLSearchParams(location.search); const draft = { amount: p.get('amount') || '', name: p.get('merchant') || '', source: p.get('src') || 'manual', ts: p.has('ts') ? Number(p.get('ts')) * 1000 : undefined }; if (p.has('amount') || p.has('merchant')) history.replaceState(null, '', location.pathname); return draft; }
 // Consume once, including React StrictMode's development remount.
 const initialDraft = readDraft();
 export default function App() {
   useVisualViewport();
-  const [key, setKey] = useState(localStorage.getItem('app-key') || ''), [keyInput, setKeyInput] = useState(''), [owner, setOwner] = useState('');
+  const [key, setKey] = useState(storage.getItem('app-key') || ''), [keyInput, setKeyInput] = useState(''), [owner, setOwner] = useState('');
   const [data, setData] = useState<Bootstrap | null>(null), [tab, setTab] = useState(0), [month, setMonth] = useState(today('Asia/Almaty').slice(0, 7));
   const [queue, setQueue] = useState<Queued[]>([]), [online, setOnline] = useState(navigator.onLine), [error, setError] = useState(''), [toast, setToast] = useState(''), [loading, setLoading] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
+  const [theme, setTheme] = useState(storage.getItem('theme') || 'system');
   const [deletions, setDeletions] = useState<Expense[]>([]), timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const [duplicate, setDuplicate] = useState<{ expense: ExpenseInput; resolve: (yes: boolean) => void } | null>(null);
   const [draft, setDraft] = useState(initialDraft);
+  const knownQueue = useRef<Queued[]>([]);
+  knownQueue.current = queue;
   const session = useRef(key), requestSequence = useRef(0), dialogRef = useRef<HTMLDivElement>(null);
   const [logoutPrompt, setLogoutPrompt] = useState(false);
   const cancelDialog = useCallback(() => { duplicate?.resolve(false); setDuplicate(null); setLogoutPrompt(false); }, [duplicate]);
@@ -43,23 +47,23 @@ export default function App() {
   const reload = useCallback(async () => {
     if (!key || !owner || session.current !== key) return;
     const sequence = ++requestSequence.current;
-    try { const b = await api<Bootstrap>(`bootstrap?month=${month}`, key); if (session.current !== key || sequence !== requestSequence.current) return; setData(b); localStorage.setItem(`bootstrap-${owner}`, JSON.stringify(b)); setError(''); }
+    try { const b = await api<Bootstrap>(`bootstrap?month=${month}`, key); if (session.current !== key || sequence !== requestSequence.current) return; setData(b); storage.setItem(`bootstrap-${owner}`, JSON.stringify(b)); setError(''); }
     catch (e) { if (session.current === key && sequence === requestSequence.current) setError(e instanceof Error ? e.message : 'Нет связи с таблицей. Повторите'); }
   }, [key, owner, month]);
   const sync = useCallback(async () => {
     if (!owner || session.current !== key) return;
     try {
-      const before = await allQueued(owner); await flushQueue();
+      const displayed = knownQueue.current; const before = await allQueued(owner); await flushQueue();
       if (session.current !== key) return;
       const after = await allQueued(owner); setQueue(after);
-      if (navigator.onLine && before.length !== after.length) await reload();
+      if (navigator.onLine && [...before, ...displayed].some(row => !after.some(item => item.id === row.id))) await reload();
     } catch (e) { if (session.current === key) showError(e); }
   }, [owner, key, reload]);
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('theme', theme); }, [theme]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; storage.setItem('theme', theme); }, [theme]);
   useEffect(() => {
     let active = true;
     if (!key) return;
-    void (async () => { try { if (localStorage.getItem('app-key') !== key) return; const id = await setQueueKey(key, () => active && session.current === key && localStorage.getItem('app-key') === key); if (!active || session.current !== key) return; setOwner(id); const cache = localStorage.getItem(`bootstrap-${id}`); if (cache) setData(JSON.parse(cache)); const rows = await allQueued(id); if (session.current === key) setQueue(rows); } catch { if (active) setError('Хранилище недоступно. Разрешите сохранение данных сайта'); } })();
+    void (async () => { try { if (storage.getItem('app-key') !== key) return; const id = await setQueueKey(key, () => active && session.current === key && storage.getItem('app-key') === key); if (!active || session.current !== key) return; setOwner(id); const cache = storage.getItem(`bootstrap-${id}`); if (cache) setData(readCachedBootstrap(cache)); const rows = await allQueued(id); if (session.current === key) setQueue(rows); } catch { if (active) setError('Хранилище недоступно. Разрешите сохранение данных сайта'); } })();
     return () => { active = false; };
   }, [key]);
   useEffect(() => { void reload(); }, [reload]);
@@ -73,7 +77,7 @@ export default function App() {
   }, [sync, reload]);
   // Display cached history for the selected month while offline.
   const visibleData = data ? { ...data, expenses: data.history.filter(e => e.date.startsWith(month) && !deletions.some(d => d.row === e.row)), summary: data.summaries.find(s => s.month === month) || null } : null;
-  async function login() { setLoading(true); setError(''); try { const b = await api<Bootstrap>('bootstrap', keyInput); const id = await setQueueKey(keyInput); localStorage.setItem('app-key', keyInput); localStorage.setItem(`bootstrap-${id}`, JSON.stringify(b)); session.current = keyInput; setMonth(today(b.tz).slice(0, 7)); setOwner(id); setData(b); setKey(keyInput); setKeyInput(''); } catch (e) { showError(e); } finally { setLoading(false); } }
+  async function login() { setLoading(true); setError(''); try { const b = await api<Bootstrap>('bootstrap', keyInput); if (!storage.setItem('app-key', keyInput)) throw new Error('Разрешите хранение данных сайта для входа'); const id = await setQueueKey(keyInput); storage.setItem(`bootstrap-${id}`, JSON.stringify(b)); session.current = keyInput; setMonth(today(b.tz).slice(0, 7)); setOwner(id); setData(b); setKey(keyInput); setKeyInput(''); } catch (e) { showError(e); } finally { setLoading(false); } }
   async function save(e: ExpenseInput, ts?: number) {
     if (!data || session.current !== key) return false;
     validateExpense(e, data.categories, data.tz);
@@ -99,13 +103,13 @@ export default function App() {
   async function logout() {
     try {
       await setQueueKey('');
-      localStorage.removeItem('app-key');
-      Object.keys(localStorage).filter(k => k.startsWith('bootstrap-')).forEach(k => localStorage.removeItem(k));
+      if (!storage.removeItem('app-key')) throw new Error('Storage unavailable');
+      storage.keys().filter(k => k.startsWith('bootstrap-')).forEach(k => storage.removeItem(k));
       closeSession(); setError('');
     } catch { setError('Не удалось защитить очередь. Не закрывайте приложение: повторите выход'); }
   }
   function requestLogout() { if (queue.length) setLogoutPrompt(true); else void logout(); }
-  async function exportCsv() { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = `expenses-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { setError((e as Error).message); } }
+  async function exportCsv() { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok || !r.headers.get('Content-Type')?.includes('text/csv')) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = `expenses-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { setError((e as Error).message); } }
   if (!key) return <main className="login"><div className="brand-mark">₸</div><p className="eyebrow">ЛИЧНЫЕ ФИНАНСЫ</p><h1>Каждая трата<br/>на своём месте.</h1><p className="login-description">Быстрые записи. Понятный бюджет.<br/>Ваша привычная Google-таблица.</p><form onSubmit={e => { e.preventDefault(); void login(); }}><label htmlFor="access-key">Код доступа</label><input id="access-key" type="password" autoComplete="current-password" value={keyInput} onChange={e => setKeyInput(e.target.value)} placeholder="Введите ваш код" required/>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={loading}>{loading ? 'Подключаем…' : 'Войти →'}</button></form><small>Теңге · личный трекер расходов</small></main>;
   return <div className="app-shell"><header className="app-header"><a className="brand" href="/" onClick={e => { e.preventDefault(); setTab(0); }}><span className="brand-mark small">₸</span><span>теңге<span className="brand-sub">ЛИЧНЫЙ ЖУРНАЛ</span></span></a><span className={online ? 'connection' : 'connection offline'}><i/>{online ? data?.mock ? 'Демо-режим' : 'На связи' : 'Офлайн'}{queue.length ? ` · ${queue.length}` : ''}</span></header>
     {error && <div className="error-banner" role="alert">{error} <button onClick={() => void reload()}>Обновить</button><button onClick={requestLogout}>Выйти</button></div>}
