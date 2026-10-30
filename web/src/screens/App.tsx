@@ -5,6 +5,7 @@ import { useFinance } from '../lib/useFinance';
 import { useAppearance } from '../lib/appearance';
 import { useVisualViewport } from '../lib/viewport';
 import { useDialog } from '../lib/dialog';
+import { useDismissGesture } from '../lib/gestures';
 import Add, { type Draft } from './Add';
 import Expenses from './Expenses';
 import Overview from './Overview';
@@ -26,11 +27,23 @@ export default function App() {
   useDialog(dialog, !!duplicate || logoutPrompt, cancelDialog);
   const closeAdd = useCallback(() => { setAddOpen(false); history.replaceState({ tab: history.state?.tab || 0 }, '', location.pathname); }, []);
   useDialog(addDialog, addOpen && !!data && !duplicate, closeAdd);
+  useDismissGesture(addDialog, addOpen && !!data && !duplicate, closeAdd);
+  useDismissGesture(dialog, !!duplicate || logoutPrompt, cancelDialog);
   useEffect(() => { const back = (event: PopStateEvent) => { setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => setCompact(window.scrollY > 64); window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
   useEffect(() => { if (previousKey.current && !key) { setDraft({ amount: '', name: '', source: 'manual' }); setAddOpen(false); setLogoutPrompt(false); setTab(0); setFilter(null); history.replaceState({ tab: 0 }, '', location.pathname); } previousKey.current = key; }, [key]);
   useEffect(() => { if (key && data && tab === 0) void finance.loadMonths([month]); }, [key, !!data, tab, month, finance.loadMonths]);
   function navigate(next: number) { history.pushState({ tab: next }, '', location.pathname); setTab(next); setAddOpen(false); window.scrollTo({ top: 0 }); }
   function openAdd() { history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
+  useEffect(() => {
+    const shortcuts = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (!key || !data || event.ctrlKey || event.metaKey || event.altKey || target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || addOpen || duplicate || logoutPrompt || document.querySelector('.modal-backdrop [role="dialog"]')) return;
+      if (event.key.toLowerCase() === 'n' || event.key.toLowerCase() === 'т') { event.preventDefault(); openAdd(); }
+      if (event.key === '/') { event.preventDefault(); navigate(0); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { const direction = event.key === 'ArrowLeft' ? 'Предыдущий' : 'Следующий', unit = tab === 1 ? 'период' : 'месяц'; const button = document.querySelector<HTMLButtonElement>(`[aria-label="${direction} ${unit}"]`); if (button && !button.disabled) { event.preventDefault(); button.click(); } }
+    };
+    document.addEventListener('keydown', shortcuts); return () => document.removeEventListener('keydown', shortcuts);
+  });
   const logout = async () => { if (await finance.logout()) setLogoutPrompt(false); };
   const requestLogout = () => queue.length ? setLogoutPrompt(true) : void logout();
   if (!key) return <main className="login"><div className="brand-mark">₸</div><h1>Каждая трата<br/>на своём месте.</h1><p>Быстрые записи. Понятный бюджет.<br/>Ваша привычная Google-таблица.</p><form onSubmit={e => { e.preventDefault(); void finance.login(); }}><label htmlFor="access-key">Код доступа</label><input id="access-key" type="password" autoComplete="current-password" value={finance.keyInput} onChange={e => finance.setKeyInput(e.target.value)} placeholder="Введите ваш код" required/>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={finance.loading}>{finance.loading ? 'Подключаем…' : 'Войти'}</button></form><small>Теңге · личный трекер расходов</small></main>;
@@ -45,7 +58,7 @@ export default function App() {
     </>}</main>
     <div className="navigation"><nav className="bottom-nav material" aria-label="Основная навигация">{tabs.map((t, i) => <button key={t.name} aria-label={t.name} aria-current={tab === i ? 'page' : undefined} onClick={() => navigate(i)}><Icon name={t.icon}/><span>{t.name}</span></button>)}</nav><button className="add-button" aria-label="Добавить расход" title="Добавить расход (N)" onClick={openAdd}><Icon name="plus"/><span>Добавить</span></button></div>
   </div>
-    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material"><button className="icon-button" aria-label="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
+    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
     {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Для восстановления понадобится прежний код доступа. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={() => setLogoutPrompt(false)}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
     {toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}
     {!!finance.deletions.length && <div className="undo-stack">{finance.deletions.map(e => <div key={e.row}><span>Удаляем: {displayName(e)}</span><button onClick={() => finance.undo(e)}>Отменить</button></div>)}</div>}
