@@ -19,7 +19,9 @@ try {
   const headers = { 'X-App-Key': vars.APP_KEY };
   const health = await read('/api/health', headers);
   if (!health.ok || !(await health.json()).ok) throw new Error(`health не прошёл, HTTP ${health.status}`);
+  const started = performance.now();
   const response = await read('/api/bootstrap', headers);
+  const bootstrapMs = [Math.round(performance.now() - started)];
   if (!response.ok) throw new Error(`bootstrap HTTP ${response.status}`);
   const b = await response.json();
   if (b.mock) throw new Error('Опубликованный Worker работает в mock');
@@ -28,5 +30,9 @@ try {
   if (!match) throw new Error('Суммы журнала не совпали со сводкой');
   const unauthenticated = await read('/api/health');
   if (unauthenticated.status !== 401) throw new Error(`Без ключа ожидался HTTP 401, получен ${unauthenticated.status}`);
-  console.log(JSON.stringify({ url: base, health: true, liveRead: true, mock: false, expenseCount: b.history.length, categories: b.categories.length, summariesMatch: match, unauthorizedStatus: unauthenticated.status, platformRetries, writes: 0 }, null, 2));
+  const shell = await read('/');
+  for (const r of [response, shell]) if (!r.headers.get('Content-Security-Policy')?.includes("frame-ancestors 'none'") || r.headers.get('X-Content-Type-Options') !== 'nosniff' || r.headers.get('Referrer-Policy') !== 'no-referrer') throw new Error('Security headers missing');
+  if (response.headers.get('Cache-Control') !== 'no-store') throw new Error('API cache policy missing');
+  for (let i = 0; i < 2; i++) { const start = performance.now(); const warm = await read('/api/bootstrap', headers); if (!warm.ok) throw new Error('Warm read failed'); await warm.json(); bootstrapMs.push(Math.round(performance.now() - start)); }
+  console.log(JSON.stringify({ url: base, health: true, liveRead: true, mock: false, expenseCount: b.history.length, categories: b.categories.length, summariesMatch: match, unauthorizedStatus: unauthenticated.status, securityHeaders: true, bootstrapMs, platformRetries, writes: 0 }, null, 2));
 } catch (error) { console.error('Deployment verification failed:', error.message); process.exitCode = 1; }
