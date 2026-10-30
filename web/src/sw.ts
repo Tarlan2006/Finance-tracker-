@@ -10,7 +10,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).catch(async () => {
+    event.respondWith(fetch(event.request).then(response => { if (!response.ok) throw new Error('Navigation unavailable'); return response; }).catch(async () => {
       const shell = await caches.match('/index.html');
       // Workers Assets redirects /index.html to /. A redirected cached Response cannot
       // fulfill a navigation whose redirect mode is manual; rewrap the cached body.
