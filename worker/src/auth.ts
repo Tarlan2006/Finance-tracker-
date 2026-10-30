@@ -14,8 +14,10 @@ export class Auth {
     let diff = 0; for (let i = 0; i < left.length; i++) diff |= left[i] ^ right[i];
     if (diff !== 0) {
       // Bound isolate memory and expire idle IP entries.
-      if (this.failures.size > 10000) for (const [id, f] of this.failures) if (f.until <= this.now()) this.failures.delete(id);
-      const count = entry && entry.until > this.now() ? entry.count + 1 : 1;
+      if (this.failures.size >= 10000) { for (const [id, f] of this.failures) if (f.until <= this.now()) this.failures.delete(id); if (this.failures.size >= 10000) this.failures.delete(this.failures.keys().next().value!); }
+      // The digest awaits above: another request may have incremented this IP meanwhile.
+      const latest = this.failures.get(ip);
+      const count = latest && latest.until > this.now() ? latest.count + 1 : 1;
       this.failures.set(ip, { count, until: this.now() + 15 * 60000 });
       if (count >= 10) throw new AppError(429, 'rate_limit', 'Слишком много попыток. Подождите 15 минут');
       throw new AppError(401, 'unauthorized', 'Неверный код доступа');
