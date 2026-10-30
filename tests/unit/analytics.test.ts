@@ -1,0 +1,21 @@
+import { expect, it } from 'vitest';
+import { budgetStatus, categoryColor, categoryTotals, dailyTotals, dayCount, inPeriod, movePeriod, palette, periodFor, periodMonths, periodStats, remainingPerDay, ringSegments, weekStart } from '../../shared/analytics';
+import { today } from '../../shared/dates';
+import type { Expense } from '../../shared/types';
+const e = (date: string, amount: number, category = 'еда'): Expense => ({ date, amount, category, id: '', name: '', comment: '', source: 'manual', row: 2, fp: '' });
+it.each([['2026-10-26', '2026-10-26'], ['2026-11-01', '2026-10-26'], ['2027-01-01', '2026-12-28'], ['2024-02-29', '2024-02-26']])('Monday for %s', (day, monday) => expect(weekStart(day)).toBe(monday));
+it('Almaty midnight is applied before week arithmetic', () => expect(weekStart(today('Asia/Almaty', new Date('2026-11-01T19:00:00Z')))).toBe('2026-11-02'));
+it('cross-month week includes both months and all seven days', () => { const p = periodFor('2026-11-01', 'week'); expect(periodMonths(p)).toEqual(['2026-10', '2026-11']); expect(dailyTotals([e('2026-10-31', .1), e('2026-11-01', .2)], p).reduce((s, d) => s + Math.round(d.amount * 100), 0)).toBe(30); expect(dayCount(p.start, p.end)).toBe(7); });
+it('calendar month and year transitions', () => { expect(periodFor('2024-02-10', 'month').end).toBe('2024-02-29'); expect(periodFor('2026-02-10', 'month').end).toBe('2026-02-28'); expect(movePeriod(periodFor('2026-12-01', 'month'), 1).start).toBe('2027-01-01'); });
+it('same elapsed days, not entire preceding month', () => { const stats = periodStats([e('2026-10-05', 20), e('2026-09-05', 40), e('2026-09-30', 100)], periodFor('2026-10-10', 'month'), '2026-10-10'); expect(stats.previousTotal).toBe(40); expect(stats.percent).toBe(-50); expect(stats.forecast).toBe(62); });
+it('previous short month is clamped and completed periods use full previous period', () => { expect(periodStats([], periodFor('2024-03-31', 'month'), '2024-03-31').previousEnd).toBe('2024-02-29'); const s = periodStats([e('2026-09-30', 10)], periodFor('2026-10-10', 'month'), '2026-11-10'); expect(s.previousEnd).toBe('2026-09-30'); expect(s.forecast).toBeNull(); });
+it('week comparison uses same weekday, zero base is not infinity', () => { const s = periodStats([e('2026-10-26', 10), e('2026-10-19', 5), e('2026-10-25', 99)], periodFor('2026-10-27', 'week'), '2026-10-27'); expect(s.percent).toBe(100); expect(s.previousTotal).toBe(5); expect(periodStats([], periodFor('2026-10-27', 'week'), '2026-10-27').percent).toBeNull(); });
+it('category totals include unclassified and removed dictionary entries; ring groups under 2% only', () => { const rows = [e('2026-10-01', 98), e('2026-10-02', 1, ''), e('2026-10-03', 1, 'старая')]; const list = categoryTotals(rows, [{ name: 'еда', limit: 100 }]); expect(list).toHaveLength(3); const ring = ringSegments(list); expect(ring).toHaveLength(2); expect(ring[1].members).toEqual(expect.arrayContaining(['', 'старая'])); expect(ring.reduce((s, c) => s + c.amount, 0)).toBe(100); expect(inPeriod(rows, periodFor('2026-10-01', 'month'))).toHaveLength(3); });
+it('remaining daily allowance includes today and is absent outside current month', () => { expect(remainingPerDay(100, 300, '2026-10', '2026-10-30')).toBe(100); expect(remainingPerDay(100, 300, '2026-10', '2026-10-31')).toBe(200); expect(remainingPerDay(300, 300, '2026-10', '2026-10-30')).toBeNull(); expect(remainingPerDay(0, 300, '2026-09', '2026-10-30')).toBeNull(); });
+it('thresholds include exactly 70 and 90 percent', () => { expect(budgetStatus(70, 100)).toBe('warning'); expect(budgetStatus(90, 100)).toBe('danger'); expect(budgetStatus(1, 0)).toBe('none'); });
+it('colors are deterministic across order and all chart swatches contrast 3:1 with their background', () => {
+  expect(categoryColor('Новая категория')).toBe(categoryColor('Новая категория')); expect(categoryColor('НОВАЯ КАТЕГОРИЯ')).toBe(categoryColor('новая категория'));
+  const l = (hex: string) => hex.slice(1).match(/../g)!.map(v => parseInt(v, 16) / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0);
+  for (const color of palette.dark) expect((l(color) + .05) / .05).toBeGreaterThanOrEqual(3);
+  for (const color of palette.light) expect(1.05 / (l(color) + .05)).toBeGreaterThanOrEqual(3);
+});

@@ -21,8 +21,9 @@ export function useVisualViewport() {
         const options = active.getAttribute('aria-controls');
         const suggestions = options ? document.getElementById(options) : null;
         const fieldBottom = rect.bottom + (suggestions ? suggestions.getBoundingClientRect().height + 4 : 0);
-        if (fieldBottom > bottom) window.scrollBy(0, fieldBottom - bottom);
-        else if (rect.top < top + 12) window.scrollBy(0, rect.top - top - 12);
+        const surface = active.closest('.scroll-surface') || window;
+        if (fieldBottom > bottom) surface.scrollBy(0, fieldBottom - bottom);
+        else if (rect.top < top + 12) surface.scrollBy(0, rect.top - top - 12);
       });
     };
     viewport?.addEventListener('resize', update); viewport?.addEventListener('scroll', update);

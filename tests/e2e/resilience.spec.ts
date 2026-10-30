@@ -1,14 +1,15 @@
+import { navigate } from './navigation';
 import { test, expect, type Page } from '@playwright/test';
 const key = 'mock-local-key';
-async function login(page: Page) { await page.goto('/'); await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти →' }).click(); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
+async function login(page: Page) { await page.goto('/'); await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
 async function record(page: Page) { await page.getByRole('button', { name: '1', exact: true }).click(); await page.getByRole('button', { name: '🍔 Продукты и супермаркеты', exact: true }).click(); await page.getByRole('button', { name: /^Сохранить ·/ }).click(); }
 async function storage(page: Page) { return page.evaluate(async () => { const db = await new Promise<IDBDatabase>(resolve => { const r = indexedDB.open('tenge-finance-v1'); r.onsuccess = () => resolve(r.result); }); const rows = await Promise.all(['queue', 'meta'].map(s => new Promise<unknown[]>(resolve => { const r = db.transaction(s).objectStore(s).getAll(); r.onsuccess = () => resolve(r.result); }))); db.close(); return rows; }); }
 test.afterEach(async ({ request, context }) => { await context.setOffline(false); const b = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': key } })).json(); expect(b.mock).toBe(true); for (const e of b.history as { id: string; row: number; fp: string }[]) if (!e.id.includes('-mock-')) await request.delete(`/api/expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, { headers: { 'X-App-Key': key } }); });
 test('pending logout seals queue atomically and restores only with original key', async ({ page, context }) => {
   await login(page); await context.route('**/api/expenses', r => r.abort()); await page.getByLabel('Название', { exact: false }).first().fill('Секрет очереди'); await record(page);
-  await page.getByRole('button', { name: '··· Ещё' }).click(); await page.getByRole('button', { name: 'Выйти', exact: true }).click(); await page.getByRole('button', { name: 'Выйти и защитить очередь' }).click(); await expect(page.getByLabel('Код доступа', { exact: true })).toBeVisible();
+  await navigate(page, 'Ещё'); await page.getByRole('button', { name: 'Выйти', exact: true }).click(); await page.getByRole('button', { name: 'Выйти и защитить очередь' }).click(); await expect(page.getByLabel('Код доступа', { exact: true })).toBeVisible();
   const sealed = await storage(page); expect(sealed[0]).toEqual([]); expect(JSON.stringify(sealed)).not.toContain('Секрет очереди'); expect(JSON.stringify(sealed)).not.toContain(key); expect(sealed[1]).toHaveLength(1);
-  await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти →' }).click(); await page.getByRole('button', { name: '≡ Траты' }).click(); await expect(page.getByText('Секрет очереди · 1 ₸')).toBeVisible(); expect((await storage(page))[0]).toHaveLength(1);
+  await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await navigate(page, 'Траты'); await expect(page.getByText('Секрет очереди · 1 ₸')).toBeVisible(); expect((await storage(page))[0]).toHaveLength(1);
   await page.getByRole('button', { name: 'Убрать', exact: true }).click(); await page.getByRole('button', { name: 'Отменить', exact: true }).click(); await expect(page.getByText('Секрет очереди · 1 ₸')).toBeVisible();
   await page.getByRole('button', { name: 'Убрать', exact: true }).click(); expect((await storage(page))[0]).toHaveLength(1); await expect.poll(async () => (await storage(page))[0].length).toBe(0);
 });
@@ -17,7 +18,7 @@ test('lost response after server commit retries same ID exactly once across two 
   await page.route('**/api/expenses', async r => { id = r.request().postDataJSON().id; const response = await r.fetch(); expect(response.status()).toBe(201); committed = true; await r.abort(); });
   await record(page); await expect.poll(() => committed).toBe(true); await page.unroute('**/api/expenses');
   const other = await context.newPage(); await other.goto('/');
-  await page.getByRole('button', { name: '≡ Траты' }).click(); await page.getByRole('button', { name: 'Повторить', exact: true }).click();
+  await navigate(page, 'Траты'); await page.getByRole('button', { name: 'Повторить', exact: true }).click();
   await expect.poll(async () => (await storage(page))[0].length).toBe(0);
   const b = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': key } })).json(); expect(b.history.filter((e: { id: string }) => e.id === id)).toHaveLength(1);
 });
@@ -38,5 +39,5 @@ test('custom date survives midnight', async ({ page }) => {
   await page.getByRole('button', { name: 'Сегодня', exact: true }).click(); await expect(page.getByLabel('Дата расхода')).toHaveValue('2027-01-01');
 });
 test('dialog supports Escape and focus return', async ({ page }) => {
-  await login(page); await page.getByRole('button', { name: '≡ Траты' }).click(); const row = page.locator('.expense-main').first(); await row.click(); await expect(page.getByRole('dialog')).toBeVisible(); await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0); await expect(row).toBeFocused();
+  await login(page); await navigate(page, 'Траты'); const row = page.locator('.expense-main').first(); await row.click(); await expect(page.getByRole('dialog')).toBeVisible(); await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0); await expect(row).toBeFocused();
 });

@@ -1,0 +1,19 @@
+:root {
+  color-scheme: dark;
+  --bg:#000; --card:#111113; --raised:#1a1a1d; --text:#f5f5f7; --secondary:#9a9aa2; --muted:#6b6b73;
+  --line:#2b2b30; --accent:#79b8ad; --on-accent:#0b2520; --danger:#f09797; --warning:#d0b96f;
+  --material:rgba(26,26,29,.88); --overlay:rgba(0,0,0,.6); --bar:#62626d;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
+  --radius:16px; --radius-inner:12px; --pill:999px;
+  --font-xs:.75rem; --font-sm:.875rem; --font-body:1rem; --font-heading:1.25rem; --font-value:1.75rem; --font-title:2.125rem;
+  --page:var(--space-4); --section:var(--space-6); --control:44px; --row:64px; --nav-height:64px; --fab:56px;
+  --phone-max:520px; --tablet-max:720px; --desktop-max:1100px; --dialog-max:480px; --sidebar:200px;
+  --duration:180ms; --viewport-bottom:0px; --viewport-top:0px; --viewport-height:100dvh;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",system-ui,"Segoe UI",Roboto,sans-serif;
+  font-size:16px; line-height:1.45; font-weight:400; font-synthesis:none; text-rendering:optimizeLegibility;
+}
+:root[data-theme="light"] {
+  color-scheme:light; --bg:#f5f5f7; --card:#fff; --raised:#ededf0; --text:#1d1d1f; --secondary:#63636c; --muted:#777780;
+  --line:#dcdce1; --accent:#377f73; --on-accent:#fff; --danger:#af353c; --warning:#887021;
+  --material:rgba(255,255,255,.88); --overlay:rgba(0,0,0,.3); --bar:#93939e;
+}

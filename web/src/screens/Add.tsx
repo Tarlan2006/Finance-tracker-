@@ -33,7 +33,7 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
     finally { lock.current = false; setBusy(false); }
   }
   return <section className="add-screen" aria-label="Новый расход">
-    <div className="section-heading"><div><p className="eyebrow">БЫСТРАЯ ЗАПИСЬ</p><h1>Новый расход</h1></div><span className="round-icon">↗</span></div>
+    <h1>Новый расход</h1>
     {source !== 'manual' && <div className="payment-note">Из платежа · {source} <span>Проверьте и сохраните</span></div>}
     <div className="amount-card"><label htmlFor="amount">Сколько потратили?</label><div className="amount-line"><input id="amount" aria-label="Сумма" value={amount || '0'} readOnly inputMode="none"/><span>{data.currency}</span></div><div className="amount-caption">{amount.includes('+') ? `Итого: ${money(total)}` : 'В тенге. Название можно не указывать.'}</div></div>
     <div className="keypad" aria-label="Цифровая клавиатура">{['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '000', '+', '⌫'].map(key => <button key={key} type="button" aria-label={key === '⌫' ? 'Стереть цифру' : key === ',' ? 'Запятая' : key === '+' ? 'Плюс' : key} className={key === '⌫' ? 'backspace' : ''} onClick={() => setAmount(v => key === '⌫' ? v.slice(0, -1) : (v + key).slice(0, 32))}>{key}</button>)}</div>
