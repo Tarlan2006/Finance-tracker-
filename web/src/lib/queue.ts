@@ -12,7 +12,6 @@ async function transaction<T>(store: string, mode: IDBTransactionMode, run: (s: 
 export const allQueued = (owner: string) => transaction<Queued[]>('queue', 'readonly', s => s.getAll()).then(rows => rows.filter(r => r.owner === owner).sort((a, b) => a.created - b.created || a.id.localeCompare(b.id)));
 export const putQueued = (row: Queued) => transaction('queue', 'readwrite', s => s.put(row));
 export const removeQueued = (id: string) => transaction('queue', 'readwrite', s => s.delete(id));
-export async function hasWaitingQueue() { const config = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config')); return config ? (await allQueued(config.owner)).some(q => q.status === 'queued') : false; }
 export async function setQueueKey(key: string, stillActive: () => boolean = () => true): Promise<string> {
   return withQueueLock(() => withSessionLock(async () => {
     if (!stillActive()) return '';
@@ -77,6 +76,7 @@ export async function retryQueued(row: Queued) { await withQueueLock(async () =>
 async function drain() {
   const config = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
   if (!config) return;
+  let changed = false;
   for (const item of await allQueued(config.owner)) {
     if (item.status === 'error') continue;
     if (item.nextAt > Date.now()) break;
@@ -88,7 +88,7 @@ async function drain() {
       const data = await readJson(r);
       const saved = data.expense as Partial<ExpenseInput> | undefined;
       if (saved?.id !== item.id) throw new ApiError(502, 'Сервер не подтвердил запись. Повторяем с тем же ID', true);
-      await removeQueued(item.id);
+      await removeQueued(item.id); changed = true;
     } catch (error) {
       if (error instanceof ApiError && !error.retryable) {
         await putQueued({ ...item, status: 'error', error: error.message });
@@ -98,6 +98,7 @@ async function drain() {
       await putQueued({ ...item, attempts: item.attempts + 1, nextAt: Date.now() + Math.min(60000, 1000 * 2 ** item.attempts) }); break;
     }
   }
+  if (changed && 'BroadcastChannel' in globalThis) { const channel = new BroadcastChannel('tenge-sync'); channel.postMessage('queue-updated'); channel.close(); }
 }
 let running: Promise<void> | undefined;
 export function flushQueue(): Promise<void> {

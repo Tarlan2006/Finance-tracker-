@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { csv, expensesFromRows, fingerprint, firstEmptyRow, looksDuplicate, normalize, parseAmount, serialDate, suggestion, today, validateExpense } from '../../shared/logic';
-import { parseNotification, parseVoice } from '../../shared/parse-notification';
+import { parseNotification } from '../../shared/parse-notification';
 import type { Expense } from '../../shared/types';
 const expense: Expense = { id: '1793332800000-abcdefgh', date: '2026-10-30', amount: 1200, name: '', category: 'еда', comment: '', source: 'manual', row: 2, fp: '2026-10-30|1200|еда' };
 describe('суммы и даты', () => {
@@ -21,10 +21,8 @@ describe('безопасные строки и подсказки', () => {
   it('автодубль вне окна', () => expect(looksDuplicate({ ...expense, source: 'wallet-auto', id: '1793332900000-abcdefgh' }, [expense], 3, 1793333000000)).toBe(false));
   it('CSV BOM, fallback, экранирование формулы', () => { const out = csv([expense, { ...expense, name: '=HYPERLINK("evil")' }]); expect(out.startsWith('\ufeff')).toBe(true); expect(out).toContain('"еда"'); expect(out).toContain("'=HYPERLINK"); });
 });
-describe('уведомления и речь', () => {
+describe('уведомления', () => {
   it.each(['Оплата 1 200,00 ₸ Magnum', '1200 ₸ — Magnum', 'Покупка QR 1 200 KZT: Magnum'])('разбирает %s', t => expect(parseNotification(t)).toEqual({ amount: 1200, merchant: 'Magnum', kind: 'expense' }));
   it.each(['Пополнение 1200 ₸', 'Вам перевели 1200 ₸', 'Перевод между своими счетами 1200 ₸', 'Секретное уведомление'])('игнорирует %s', t => expect(parseNotification(t)).toBeNull());
   it('исходящий перевод', () => expect(parseNotification('Исходящий перевод 1200 ₸ Иван')?.amount).toBe(1200));
-  it('голос цифрами', () => expect(parseVoice('такси 1200')).toEqual({ amount: 1200, name: 'такси' }));
-  it('голос словами', () => expect(parseVoice('продукты две тысячи пятьсот')).toEqual({ amount: 2500, name: 'продукты' }));
 });

@@ -70,10 +70,11 @@ export default function App() {
   useEffect(() => {
     const network = () => { setOnline(navigator.onLine); if (navigator.onLine) { void sync(); void reload(); } };
     const message = () => void sync();
+    const channel = 'BroadcastChannel' in window ? new BroadcastChannel('tenge-sync') : null; if (channel) channel.onmessage = message;
     window.addEventListener('online', network); window.addEventListener('offline', network); navigator.serviceWorker?.addEventListener('message', message);
     const timer = setInterval(() => { if (navigator.onLine) void sync(); }, 15000);
     void sync();
-    return () => { clearInterval(timer); window.removeEventListener('online', network); window.removeEventListener('offline', network); navigator.serviceWorker?.removeEventListener('message', message); };
+    return () => { channel?.close(); clearInterval(timer); window.removeEventListener('online', network); window.removeEventListener('offline', network); navigator.serviceWorker?.removeEventListener('message', message); };
   }, [sync, reload]);
   // Display cached history for the selected month while offline.
   const visibleData = data ? { ...data, expenses: data.history.filter(e => e.date.startsWith(month) && !deletions.some(d => d.row === e.row)), summary: data.summaries.find(s => s.month === month) || null } : null;
@@ -89,7 +90,6 @@ export default function App() {
     await enqueue(e, owner); setQueue(await allQueued(owner));
     setDraft({ amount: '', name: '', source: 'manual' });
     notify(navigator.onLine ? 'Сохранено · отправляется в таблицу' : 'Сохранено в очередь');
-    if ('serviceWorker' in navigator) void navigator.serviceWorker.getRegistration().then(reg => (reg as ServiceWorkerRegistration & { sync?: { register(tag: string): Promise<void> } } | undefined)?.sync?.register('finance-queue')).catch(() => undefined);
     void sync(); return true;
   }
   async function edit(e: Expense, patch: Partial<Expense>) { await api(`expenses/${e.row}`, key, { method: 'PATCH', body: JSON.stringify({ ...patch, fp: e.fp }) }); await reload(); notify('Изменения сохранены'); }

@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { flushQueue, hasWaitingQueue } from './lib/queue';
+export {};
 declare const self: ServiceWorkerGlobalScope;
 declare const __PRECACHE__: string[];
 declare const __VERSION__: string;
@@ -19,5 +19,3 @@ self.addEventListener('fetch', event => {
   }
   event.respondWith((async () => { const cached = await caches.match(event.request); const update = fetch(event.request).then(async response => { if (response.ok) { const cache = await caches.open(CACHE); await cache.put(event.request, response.clone()); } return response; }); if (cached) { event.waitUntil(update.catch(() => undefined)); return cached; } return update; })());
 });
-// Chromium Background Sync can drain the same durable queue with the window closed.
-self.addEventListener('sync', ((event: ExtendableEvent & { tag: string }) => { if (event.tag === 'finance-queue') event.waitUntil(flushQueue().then(async () => { const clients = await self.clients.matchAll({ type: 'window' }); clients.forEach(client => client.postMessage({ type: 'queue-updated' })); if (await hasWaitingQueue()) throw new Error('Очередь ожидает повторной синхронизации'); })); }) as EventListener);

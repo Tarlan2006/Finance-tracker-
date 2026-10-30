@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clean, parseAmount, shiftDate, suggestion, today } from '../../../shared/logic';
-import { parseVoice } from '../../../shared/parse-notification';
 import type { Bootstrap, ExpenseInput } from '../../../shared/types';
 import NameInput from './NameInput';
-interface SpeechRecognitionLike { lang: string; start(): void; onresult: ((event: { results: { transcript: string }[][] }) => void) | null; onerror: (() => void) | null }
-type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
 export interface Draft { amount: string; name: string; source: string; ts?: number }
 export default function Add({ data, draft, save, money }: { data: Bootstrap; draft: Draft; save: (e: ExpenseInput, ts?: number) => Promise<boolean>; money: (n: number) => string }) {
   const [amount, setAmount] = useState(draft.amount), [name, setName] = useState(draft.name);
@@ -20,9 +17,7 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
   const lock = useRef(false), id = useRef(`${Date.now()}-${crypto.randomUUID()}`);
   let total = 0; try { total = parseAmount(amount); } catch { /* incomplete expression while typing */ }
   const categories = useMemo(() => { const counts = new Map<string, number>(); data.history.forEach(e => counts.set(e.category, (counts.get(e.category) || 0) + 1)); return [...data.categories].sort((a, b) => (counts.get(b.name) || 0) - (counts.get(a.name) || 0)); }, [data.categories, data.history]);
-  const Speech = (window as SpeechWindow).SpeechRecognition || (window as SpeechWindow).webkitSpeechRecognition;
   function applyName(value: string) { setName(value); const hint = suggestion(value, data.history); if (hint.category) setCategory(hint.category); }
-  function voice() { if (!Speech) return; try { const speech = new Speech(); speech.lang = 'ru-RU'; speech.onresult = e => { try { const parsed = parseVoice(e.results[0][0].transcript); setAmount(String(parsed.amount)); applyName(parsed.name); setError(''); } catch { setError('Не удалось разобрать сумму. Попробуйте ещё раз'); } }; speech.onerror = () => setError('Голосовой ввод недоступен. Разрешите микрофон или введите сумму кнопками'); speech.start(); } catch { setError('Не удалось включить микрофон. Введите сумму кнопками'); } }
   async function submit() {
     if (lock.current) return;
     try {
@@ -44,7 +39,7 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
     <div className="keypad" aria-label="Цифровая клавиатура">{['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '000', '+', '⌫'].map(key => <button key={key} type="button" aria-label={key === '⌫' ? 'Стереть цифру' : key === ',' ? 'Запятая' : key === '+' ? 'Плюс' : key} className={key === '⌫' ? 'backspace' : ''} onClick={() => setAmount(v => key === '⌫' ? v.slice(0, -1) : (v + key).slice(0, 32))}>{key}</button>)}</div>
     <div className="label-row"><h2>Категория</h2><span>{category ? 'Выбрана ✓' : 'Выберите одну'}</span></div>
     <div className="category-grid">{categories.map(c => { const space = c.name.indexOf(' '); return <button type="button" key={c.name} className={category === c.name ? 'category selected' : 'category'} aria-pressed={category === c.name} aria-label={c.name} title={c.name} onClick={() => { setCategory(c.name); setError(''); }}><span className="category-emoji">{space < 0 ? '•' : c.name.slice(0, space)}</span><span className="category-label">{space < 0 ? c.name : c.name.slice(space + 1)}</span></button>; })}</div>
-    <NameInput value={name} onChange={applyName} history={data.history} voice={Speech ? voice : undefined}/>
+    <NameInput value={name} onChange={applyName} history={data.history}/>
     <div className="date-row"><button aria-pressed={dateMode === 'today'} className={dateMode === 'today' ? 'chip active' : 'chip'} onClick={() => { setDateMode('today'); setDate(today(data.tz)); }}>Сегодня</button><button aria-pressed={dateMode === 'yesterday'} className={dateMode === 'yesterday' ? 'chip active' : 'chip'} onClick={() => { setDateMode('yesterday'); setDate(shiftDate(today(data.tz), -1)); }}>Вчера</button><input aria-label="Дата расхода" type="date" value={date} max={shiftDate(today(data.tz), 1)} onChange={e => { setDateMode('custom'); setDate(e.target.value); }}/></div>
     {dateMode !== 'today' && <p className="date-notice" role="status">Дата записи: {date} · {dateMode === 'yesterday' ? 'выбрано «Вчера»' : 'выбрана вручную'}</p>}
     <details className="comment-details"><summary>Добавить комментарий</summary><textarea aria-label="Комментарий" maxLength={200} value={comment} onChange={e => setComment(e.target.value)}/></details>

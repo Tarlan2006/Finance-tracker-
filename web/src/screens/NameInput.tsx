@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nameSuggestions } from '../../../shared/logic';
 import type { Expense } from '../../../shared/types';
-export default function NameInput({ value, onChange, history, voice }: { value: string; onChange: (value: string) => void; history: Expense[]; voice?: () => void }) {
+export default function NameInput({ value, onChange, history }: { value: string; onChange: (value: string) => void; history: Expense[] }) {
   const [open, setOpen] = useState(false), [active, setActive] = useState(-1);
   const wrapper = useRef<HTMLDivElement>(null);
   const choices = useMemo(() => nameSuggestions(history).filter(n => n.includes(value.trim().toLocaleLowerCase('ru'))).slice(0, 5), [history, value]);
@@ -13,7 +13,7 @@ export default function NameInput({ value, onChange, history, voice }: { value: 
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setActive(index => Math.max(0, Math.min(choices.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))); }
       if (event.key === 'Enter' && open && active >= 0 && choices[active]) { event.preventDefault(); choose(choices[active]); }
       if (event.key === 'Tab') setOpen(false);
-    }}/>{voice && <button type="button" aria-label="Голосовой ввод" onClick={voice}>🎙</button>}</div>
+    }}/></div>
     {open && choices.length > 0 && <ul id="name-options" className="name-options" role="listbox" aria-label="Подсказки названия">{choices.map((name, i) => <li key={name} id={`name-option-${i}`} role="option" aria-selected={active === i} onPointerDown={event => event.preventDefault()} onClick={() => choose(name)}>{name}</li>)}</ul>}
   </div>;
 }
