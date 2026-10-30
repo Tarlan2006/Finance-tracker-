@@ -4,7 +4,8 @@ import type { Env } from './env';
 import { isMock } from './env';
 import { Auth } from './auth';
 import type { SheetsAdapter } from './sheets';
-export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+import { securityHeaders } from './headers';
+export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
 export class Api {
   private auth: Auth;
@@ -34,10 +35,13 @@ export class Api {
     try { const value = JSON.parse(text); if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(); return value; } catch { throw new AppError(422, 'json', 'Неверный JSON'); }
   }
   private async create(body: unknown, s: Snapshot, allowPending = false) {
-    const e = validateExpense(body, s.categories, this.env.TZ, allowPending);
-    const existing = expensesFromRows(s.rows).find(x => x.id === e.id);
+    const id = body && typeof body === 'object' ? clean((body as Record<string, unknown>).id) : '';
+    const existing = id ? expensesFromRows(s.rows).find(x => x.id === id) : undefined;
     if (existing) return { expense: existing, duplicate: true };
+    if (id && s.rows.some(r => r[6] === id)) throw new AppError(409, 'partial_row', 'Запись с этим ID изменена вручную. Обновите журнал');
+    const e = validateExpense(body, s.categories, this.env.TZ, allowPending);
     const row = firstEmptyRow(s.rows);
+    if (row > 1006) throw new AppError(422, 'sheet_full', 'Лист заполнен до строки 1006. Запись осталась в очереди. Расширьте формулу и лимит строк приложения перед повтором');
     // A:D empty with nonempty G/H can be an incomplete external edit. Never overwrite metadata.
     if (s.rows[row - 1]?.[6] || s.rows[row - 1]?.[7]) throw new AppError(409, 'partial_row', 'В пустой строке остался ID. Проверьте таблицу вручную');
     await this.adapter.write(row, e);
@@ -52,7 +56,7 @@ export class Api {
     const expenses = history.filter(e => e.date.startsWith(month));
     if (method === 'GET' && path === '/api/bootstrap') return json({ categories: s.categories, expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
     if (method === 'GET' && path === '/api/expenses') return json({ expenses });
-    if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="expenses-${month}.csv"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+    if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="expenses-${month}.csv"`, 'Cache-Control': 'no-store' } });
     if (method === 'POST' && path === '/api/expenses') { const result = await this.create(await this.body(request), s); return json(result, result.duplicate ? 200 : 201); }
     if (method === 'POST' && path === '/api/quick') {
       const b = await this.body(request), amount = parseAmount(b.amount), name = clean(b.merchant);

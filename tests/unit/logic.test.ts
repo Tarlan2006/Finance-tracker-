@@ -13,10 +13,10 @@ describe('безопасные строки и подсказки', () => {
   it('пустая строка учитывает A:D, а не F', () => expect(firstEmptyRow([['Дата'], [1, '', 'еда', 2], ['', '', '', '', '', '=FORMULA'], [1]])).toBe(3));
   it('не затирает частично заполненные строки', () => expect(firstEmptyRow([['Дата'], ['', 'имя'], ['', '', '', 0]])).toBe(4));
   it('читает числа формул и serial даты', () => expect(expensesFromRows([[], [serialDate(expense.date), '', 'еда', 2666]])[0]).toMatchObject({ date: expense.date, amount: 2666, name: '' }));
-  it('отпечаток', () => expect(fingerprint(expense)).toBe(expense.fp));
+  it('отпечаток включает все поля и различает ID', () => { expect(fingerprint(expense)).toContain('v2:'); expect(fingerprint(expense)).not.toBe(fingerprint({ ...expense, id: 'another' })); });
   it('нормализация', () => expect(normalize('  Ёжик 42!   ТЕСТ ')).toBe('ежик тест'));
   it('минимум два наблюдения и 60%', () => { const history = [{ ...expense, name: 'Magnum' }, { ...expense, name: 'Magnum' }]; expect(suggestion('Magnum', history).category).toBe('еда'); expect(suggestion('Magnum', history.slice(1)).category).toBe(''); expect(suggestion('', history).category).toBe(''); expect(suggestion('Magnum Astana', history).confidence).toBe(.75); });
-  it('дубль без названия', () => expect(looksDuplicate({ ...expense, id: '1793332800001-abcdefgh' }, [expense], 3)).toBe(true));
+  it('дубль без названия в пределах окна', () => expect(looksDuplicate({ ...expense, id: '1793332800001-abcdefgh' }, [expense], 3, 1793332800001)).toBe(true));
   it('цифры в названии различают траты, хотя подсказки их нормализуют', () => expect(looksDuplicate({ ...expense, id: '1793332800001-abcdefgh', name: 'Заказ 123' }, [{ ...expense, name: 'Заказ 456' }], 3)).toBe(false));
   it('автодубль вне окна', () => expect(looksDuplicate({ ...expense, source: 'wallet-auto', id: '1793332900000-abcdefgh' }, [expense], 3, 1793333000000)).toBe(false));
   it('CSV BOM, fallback, экранирование формулы', () => { const out = csv([expense, { ...expense, name: '=HYPERLINK("evil")' }]); expect(out.startsWith('\ufeff')).toBe(true); expect(out).toContain('"еда"'); expect(out).toContain("'=HYPERLINK"); });

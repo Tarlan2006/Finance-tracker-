@@ -1,4 +1,4 @@
-import { serialDate, shiftMonth, today } from '../../shared/logic';
+import { fromDateCell, serialDate, shiftMonth, today } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
 export const mockCategories: Category[] = [
@@ -26,7 +26,7 @@ export class MockSheetsAdapter implements SheetsAdapter {
     const month = today(this.tz).slice(0, 7);
     const summaries = [0, -1, -2].map(offset => {
       const m = shiftMonth(month, offset);
-      const journal = rows.slice(1).filter(r => typeof r[0] === 'number' && new Date(Date.UTC(1899, 11, 30) + r[0] * 86400000).toISOString().startsWith(m)).reduce((s, r) => s + Number(r[3]), 0);
+      const journal = rows.slice(1).filter(r => typeof r[0] === 'number' && fromDateCell(r[0]).startsWith(m)).reduce((s, r) => s + Number(r[3]), 0);
       return { month: m, income: 450000, fixed: 85000, journal, total: 85000 + journal, balance: 365000 - journal, savings: .2 };
     });
     return { rows, categories: structuredClone(mockCategories), summaries };
