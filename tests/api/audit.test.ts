@@ -25,3 +25,9 @@ it('idempotent retry survives a category being removed', async () => {
 it('API responses carry security headers, including errors', async () => {
   for (const path of ['health', 'bootstrap', 'not-found', 'export.csv']) { const r = await req(path); expect(r.headers.get('Cache-Control')).toBe('no-store'); expect(r.headers.get('Referrer-Policy')).toBe('no-referrer'); expect(r.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'"); }
 });
+it('fingerprint detects manual text changes even beyond the display normalization', async () => {
+  const { expense } = await (await req('expenses', 'POST', input())).json();
+  mock.rows[expense.row - 1][1] = 'audit   ';
+  expect((await req(`expenses/${expense.row}?fp=${encodeURIComponent(expense.fp)}`, 'DELETE')).status).toBe(409);
+  expect(mock.writes).toHaveLength(1);
+});

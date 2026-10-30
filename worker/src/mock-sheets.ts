@@ -1,3 +1,4 @@
+import { calendarDate } from '../../shared/dates';
 import { fromDateCell, serialDate, shiftMonth, today } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
@@ -16,7 +17,7 @@ export class MockSheetsAdapter implements SheetsAdapter {
     for (let i = 0; i < 60; i++) {
       const date = `${shiftMonth(month, -Math.floor(i / 20))}-${String(i % 20 + 1).padStart(2, '0')}`;
       const cat = i % 9;
-      this.rows[i + 1] = [serialDate(date), i % 4 === 0 ? '' : ['Magnum', 'Кофе', 'такси', 'Подарок', 'Аптека', 'Одежда', 'Кино', 'Курс', 'Ремонт'][cat], mockCategories[cat].name, i === 0 ? this.formulaAmount : 500 + i * 135, '', this.rows[i + 1][5], `${Date.parse(date)}-mock-${String(i).padStart(8, '0')}`, 'manual'];
+      this.rows[i + 1] = [serialDate(date), i % 4 === 0 ? '' : ['Magnum', 'Кофе', 'такси', 'Подарок', 'Аптека', 'Одежда', 'Кино', 'Курс', 'Ремонт'][cat], mockCategories[cat].name, i === 0 ? this.formulaAmount : 500 + i * 135, '', this.rows[i + 1][5], `${calendarDate(date).getTime()}-mock-${String(i).padStart(8, '0')}`, 'manual'];
     }
   }
   async read(): Promise<Snapshot> {

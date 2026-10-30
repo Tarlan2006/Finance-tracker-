@@ -23,7 +23,8 @@ export function expensesFromRows(rows: Row[]): Expense[] {
   return rows.flatMap((r, i) => {
     if (!i || r[0] === '' || r[0] == null || typeof r[3] !== 'number' || !Number.isFinite(r[3])) return [];
     const e: ExpenseInput = { date: fromDateCell(r[0]), name: clean(r[1]), category: clean(r[2]), amount: r[3], comment: clean(r[4]), id: clean(r[6]), source: clean(r[7]) || 'manual' };
-    return [{ ...e, row: i + 1, fp: fingerprint(e) }];
+    // Display normalization must not hide a concurrent manual edit in Sheets.
+    return [{ ...e, row: i + 1, fp: fingerprint({ ...e, name: String(r[1] ?? ''), category: String(r[2] ?? ''), comment: String(r[4] ?? ''), id: String(r[6] ?? ''), source: String(r[7] ?? '') }) }];
   });
 }
 export function validateExpense(value: unknown, categories: Category[], tz: string, allowPending = false): ExpenseInput {

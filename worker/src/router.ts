@@ -71,8 +71,8 @@ export class Api {
     if (match && (method === 'PATCH' || method === 'DELETE')) {
       const row = Number(match[1]);
       if (!Number.isSafeInteger(row) || row < 2) throw new AppError(422, 'row', 'Неверный номер строки');
-      const b = method === 'PATCH' ? await this.body(request) : {};
-      const fp = method === 'PATCH' ? b.fp : url.searchParams.get('fp');
+      const b = method === 'PATCH' || (request.body !== null && request.headers.get('Content-Type')?.includes('application/json')) ? await this.body(request) : {};
+      const fp = b.fp || url.searchParams.get('fp');
       const current = history.find(e => e.row === row);
       if (!current || !fp || current.fp !== fp) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите список и повторите');
       if (method === 'DELETE') { await this.adapter.clear(row); return json({ ok: true }); }

@@ -14,7 +14,7 @@ try {
   if (snapshot.rows[0]?.[6] !== 'ID' || snapshot.rows[0]?.[7] !== 'Источник') throw new Error('Ожидаются заголовки G1=ID, H1=Источник');
   const rows = snapshot.rows.slice(1).filter(r => r[0] !== '' && r[0] != null && typeof r[3] === 'number');
   const totals = {};
-  for (const r of rows) { const date = typeof r[0] === 'number' ? new Date(Date.UTC(1899, 11, 30) + Math.floor(r[0]) * 86400000).toISOString().slice(0, 10) : String(r[0]); const month = date.slice(0, 7); totals[month] = Math.round(((totals[month] || 0) + r[3]) * 100) / 100; }
+  for (const r of rows) { const date = typeof r[0] === 'number' ? new Date(Date.UTC(1899, 11, 30) + Math.floor(r[0]) * 86400000).toLocaleDateString('en-CA', { timeZone: 'UTC' }) : String(r[0]); const month = date.slice(0, 7); totals[month] = Math.round(((totals[month] || 0) + r[3]) * 100) / 100; }
   const comparisons = snapshot.summaries.map(s => ({ month: s.month, journalMatchesSummary: Math.abs((totals[s.month] || 0) - s.journal) < .01 }));
   console.log(JSON.stringify({ readOnly: true, expenseCount: rows.length, categoryCount: snapshot.categories.length, summaryMonths: snapshot.summaries.map(s => s.month), comparisons, writes: 0 }, null, 2));
 } catch (error) { console.error('Read-only smoke failed:', error instanceof Error && !/private_key|BEGIN|token|Bearer/.test(error.message) ? error.message : 'Ошибка конфигурации или сети; значения секретов скрыты'); process.exitCode = 1; }
