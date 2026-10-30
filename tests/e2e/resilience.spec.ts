@@ -9,6 +9,8 @@ test('pending logout seals queue atomically and restores only with original key'
   await page.getByRole('button', { name: '··· Ещё' }).click(); await page.getByRole('button', { name: 'Выйти', exact: true }).click(); await page.getByRole('button', { name: 'Выйти и защитить очередь' }).click(); await expect(page.getByLabel('Код доступа', { exact: true })).toBeVisible();
   const sealed = await storage(page); expect(sealed[0]).toEqual([]); expect(JSON.stringify(sealed)).not.toContain('Секрет очереди'); expect(JSON.stringify(sealed)).not.toContain(key); expect(sealed[1]).toHaveLength(1);
   await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти →' }).click(); await page.getByRole('button', { name: '≡ Траты' }).click(); await expect(page.getByText('Секрет очереди · 1 ₸')).toBeVisible(); expect((await storage(page))[0]).toHaveLength(1);
+  await page.getByRole('button', { name: 'Убрать', exact: true }).click(); await page.getByRole('button', { name: 'Отменить', exact: true }).click(); await expect(page.getByText('Секрет очереди · 1 ₸')).toBeVisible();
+  await page.getByRole('button', { name: 'Убрать', exact: true }).click(); expect((await storage(page))[0]).toHaveLength(1); await expect.poll(async () => (await storage(page))[0].length).toBe(0);
 });
 test('lost response after server commit retries same ID exactly once across two tabs', async ({ page, context, request }) => {
   await login(page); let id = ''; let committed = false;

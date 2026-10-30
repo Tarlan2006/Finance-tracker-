@@ -12,9 +12,21 @@ export function useVisualViewport() {
       document.documentElement.style.setProperty('--viewport-top', `${top}px`);
       document.documentElement.style.setProperty('--viewport-height', `${height}px`);
       document.documentElement.dataset.keyboard = keyboard ? 'open' : 'closed';
+      if (keyboard) requestAnimationFrame(() => {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+        const panel = document.querySelector<HTMLElement>('.save-bar');
+        const panelHeight = panel?.getBoundingClientRect().height || 0;
+        const rect = active.getBoundingClientRect(), bottom = top + height - panelHeight - 12;
+        const options = active.getAttribute('aria-controls');
+        const suggestions = options ? document.getElementById(options) : null;
+        const fieldBottom = rect.bottom + (suggestions ? suggestions.getBoundingClientRect().height + 4 : 0);
+        if (fieldBottom > bottom) window.scrollBy(0, fieldBottom - bottom);
+        else if (rect.top < top + 12) window.scrollBy(0, rect.top - top - 12);
+      });
     };
     viewport?.addEventListener('resize', update); viewport?.addEventListener('scroll', update);
-    window.addEventListener('resize', update); document.addEventListener('focusin', update); document.addEventListener('focusout', update); update();
-    return () => { viewport?.removeEventListener('resize', update); viewport?.removeEventListener('scroll', update); window.removeEventListener('resize', update); document.removeEventListener('focusin', update); document.removeEventListener('focusout', update); };
+    window.addEventListener('resize', update); document.addEventListener('focusin', update); document.addEventListener('focusout', update); document.addEventListener('input', update); update();
+    return () => { viewport?.removeEventListener('resize', update); viewport?.removeEventListener('scroll', update); window.removeEventListener('resize', update); document.removeEventListener('focusin', update); document.removeEventListener('focusout', update); document.removeEventListener('input', update); };
   }, []);
 }

@@ -72,7 +72,7 @@ export async function changeQueued(row: Queued, expense: ExpenseInput) {
     await putQueued({ ...current, expense, status: 'queued', attempts: 0, nextAt: 0, error: undefined });
   });
 }
-export async function discardQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (current?.owner === row.owner) await removeQueued(row.id); }); }
+export async function discardQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (!current || current.owner !== row.owner) throw new Error('Запись уже отправлена. Если нужно, удалите её через правку в журнале'); await removeQueued(row.id); }); }
 export async function retryQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (current?.owner === row.owner) await putQueued({ ...current, status: 'queued', attempts: 0, nextAt: 0, error: undefined }); }); }
 async function drain() {
   const config = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
