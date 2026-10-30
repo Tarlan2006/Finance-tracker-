@@ -70,7 +70,8 @@ export function nameSuggestions(history: Expense[]) {
   return [...names.values()].sort((a, b) => b.count - a.count || b.date.localeCompare(a.date)).map(e => e.name);
 }
 export function looksDuplicate(e: ExpenseInput, history: ExpenseInput[], windowMin: number, now = Date.now(), ts?: number) {
-  return history.some(old => old.id !== e.id && old.date === e.date && old.amount === e.amount && normalize(old.name) === normalize(e.name) && (!e.source.includes('auto') && e.source === 'manual' || Math.abs((ts || now) - Number(old.id.split('-')[0])) <= windowMin * 60000));
+  const sameName = (s: string) => clean(s).toLocaleLowerCase('ru').replace(/ё/g, 'е');
+  return history.some(old => old.id !== e.id && old.date === e.date && old.amount === e.amount && sameName(old.name) === sameName(e.name) && (!e.source.includes('auto') && e.source === 'manual' || Math.abs((ts || now) - Number(old.id.split('-')[0])) <= windowMin * 60000));
 }
 export function csv(expenses: Expense[]) {
   const field = (v: string | number) => { let s = String(v); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };

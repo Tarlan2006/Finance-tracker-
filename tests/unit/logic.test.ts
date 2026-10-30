@@ -17,6 +17,7 @@ describe('безопасные строки и подсказки', () => {
   it('нормализация', () => expect(normalize('  Ёжик 42!   ТЕСТ ')).toBe('ежик тест'));
   it('минимум два наблюдения и 60%', () => { const history = [{ ...expense, name: 'Magnum' }, { ...expense, name: 'Magnum' }]; expect(suggestion('Magnum', history).category).toBe('еда'); expect(suggestion('Magnum', history.slice(1)).category).toBe(''); expect(suggestion('', history).category).toBe(''); expect(suggestion('Magnum Astana', history).confidence).toBe(.75); });
   it('дубль без названия', () => expect(looksDuplicate({ ...expense, id: '1793332800001-abcdefgh' }, [expense], 3)).toBe(true));
+  it('цифры в названии различают траты, хотя подсказки их нормализуют', () => expect(looksDuplicate({ ...expense, id: '1793332800001-abcdefgh', name: 'Заказ 123' }, [{ ...expense, name: 'Заказ 456' }], 3)).toBe(false));
   it('автодубль вне окна', () => expect(looksDuplicate({ ...expense, source: 'wallet-auto', id: '1793332900000-abcdefgh' }, [expense], 3, 1793333000000)).toBe(false));
   it('CSV BOM, fallback, экранирование формулы', () => { const out = csv([expense, { ...expense, name: '=HYPERLINK("evil")' }]); expect(out.startsWith('\ufeff')).toBe(true); expect(out).toContain('"еда"'); expect(out).toContain("'=HYPERLINK"); });
 });
