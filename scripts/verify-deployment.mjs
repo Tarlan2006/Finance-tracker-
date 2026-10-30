@@ -6,7 +6,7 @@ try {
   const vars = parseEnv(await readFile('.dev.vars', 'utf8'));
   const headers = { 'X-App-Key': vars.APP_KEY };
   const health = await fetch(new URL('/api/health', base), { headers });
-  if (!health.ok || !(await health.json()).ok) throw new Error('health не прошёл');
+  if (!health.ok || !(await health.json()).ok) throw new Error(`health не прошёл, HTTP ${health.status}`);
   const response = await fetch(new URL('/api/bootstrap', base), { headers });
   if (!response.ok) throw new Error(`bootstrap HTTP ${response.status}`);
   const b = await response.json();
@@ -15,6 +15,6 @@ try {
   const match = b.summaries.every(s => Math.abs((totals[s.month] || 0) - s.journal) < .01);
   if (!match) throw new Error('Суммы журнала не совпали со сводкой');
   const unauthenticated = await fetch(new URL('/api/health', base));
-  if (unauthenticated.status !== 401) throw new Error('API допускает запрос без ключа');
+  if (unauthenticated.status !== 401) throw new Error(`Без ключа ожидался HTTP 401, получен ${unauthenticated.status}`);
   console.log(JSON.stringify({ url: base, health: true, liveRead: true, mock: false, expenseCount: b.history.length, categories: b.categories.length, summariesMatch: match, unauthorizedStatus: unauthenticated.status, writes: 0 }, null, 2));
 } catch (error) { console.error('Deployment verification failed:', error.message); process.exitCode = 1; }

@@ -18,7 +18,16 @@ export async function setQueueKey(key: string) {
   return owner;
 }
 export async function enqueue(expense: ExpenseInput, owner: string) { await putQueued({ id: expense.id, expense, owner, status: 'queued', attempts: 0, nextAt: 0, created: Date.now() }); }
-export async function retryQueued(row: Queued) { await putQueued({ ...row, status: 'queued', attempts: 0, nextAt: 0, error: undefined }); }
+async function withQueueLock<T>(task: () => Promise<T>): Promise<T> { return navigator.locks ? await navigator.locks.request('tenge-queue', task) : await task(); }
+export async function changeQueued(row: Queued, expense: ExpenseInput) {
+  await withQueueLock(async () => {
+    const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id));
+    if (!current || current.owner !== row.owner) throw new Error('Запись уже отправлена. Обновите журнал и измените её там');
+    await putQueued({ ...current, expense, status: 'queued', attempts: 0, nextAt: 0, error: undefined });
+  });
+}
+export async function discardQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (current?.owner === row.owner) await removeQueued(row.id); }); }
+export async function retryQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (current?.owner === row.owner) await putQueued({ ...current, status: 'queued', attempts: 0, nextAt: 0, error: undefined }); }); }
 async function drain() {
   const config = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
   if (!config) return;
