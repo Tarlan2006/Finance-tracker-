@@ -1,3 +1,4 @@
+import { digest } from './passwords';
 import { EXPENSE_HEADERS } from './sheets';
 import { AppError } from '../../shared/logic';
 import type { Config, ConfigCategory, ConfigItem, Row } from '../../shared/types';
@@ -33,13 +34,17 @@ export function planRows(tables: ConfigTables, sheet: ConfigSheet, values: Row[]
     rows[index] = after;
   }
 }
-export function moveIdentity(row: Row) { return JSON.stringify([0,1,3,4,6,7].map(i => row[i] ?? '')); }
-export function verifyPlan(plan: ConfigPlan, tables: ConfigTables, journal: Row[]) {
+export function moveIdentity(row: Row) { return digest(JSON.stringify([0, 1, 3, 4, 6, 7].map(i => row[i] ?? ''))); }
+export async function verifyPlan(plan: ConfigPlan, tables: ConfigTables, journal: Row[]) {
   for (const w of plan.writes) {
     if (![CATEGORY_SHEET, ITEM_SHEET].includes(w.sheet) || !Number.isSafeInteger(w.row) || w.row < 1 || w.row > tables.capacity[w.sheet] || w.after.length !== 8) throw new AppError(422, 'range', 'Недопустимый диапазон настроек');
     const now = (w.sheet === CATEGORY_SHEET ? tables.categories : tables.items)?.[w.row - 1] || [];
     if (!sameRow(now, w.before) && !sameRow(now, w.after)) throw configConflict();
   }
   if (plan.moves.length && EXPENSE_HEADERS.some((header, i) => journal[0]?.[i] !== header)) throw configConflict();
-  for (const m of plan.moves) { if (!Number.isInteger(m.row) || m.row < 2 || m.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала'); const now = String(journal[m.row - 1]?.[2] || ''); if (m.identity !== moveIdentity(journal[m.row - 1] || []) || (now !== m.from && now !== m.to)) throw configConflict(); }
+  await Promise.all(plan.moves.map(async move => {
+    if (!Number.isInteger(move.row) || move.row < 2 || move.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала');
+    const row = journal[move.row - 1] || [];
+    if ((row[2] !== move.from && row[2] !== move.to) || move.identity !== await moveIdentity(row)) throw configConflict();
+  }));
 }

@@ -65,5 +65,5 @@ export class MockSheetsAdapter implements SheetsAdapter {
   async readConfigTables() { return structuredClone(this.tables); }
   async readLegacyItems() { return { income: [['2026-09', 200000, 52000], ['2026-10', 200000, 60000], ['2026-11', '', ''], ['2026-12', '', '']], fixed: [['2026-09', 730, 24000, 5432, 60000], ['2026-10', 730, 24000, 9000, 60000]] }; }
   async createConfigSheets() { if (!this.tables.categories) { this.tables.categories = []; this.createdSheets.push(CATEGORY_SHEET); } if (!this.tables.items) { this.tables.items = []; this.createdSheets.push(ITEM_SHEET); } }
-  async applyConfig(plan: ConfigPlan) { verifyPlan(plan, this.tables, (await this.read()).rows); for (const move of plan.moves) this.rows[move.row - 1][2] = move.to; for (const write of plan.writes) (write.sheet === CATEGORY_SHEET ? this.tables.categories! : this.tables.items!)[write.row - 1] = structuredClone(write.after); this.configWrites.push(structuredClone(plan)); }
+  async applyConfig(plan: ConfigPlan) { await verifyPlan(plan, this.tables, (await this.read()).rows); for (const move of plan.moves) this.rows[move.row - 1][2] = move.to; for (const write of plan.writes) (write.sheet === CATEGORY_SHEET ? this.tables.categories! : this.tables.items!)[write.row - 1] = structuredClone(write.after); this.configWrites.push(structuredClone(plan)); }
 }

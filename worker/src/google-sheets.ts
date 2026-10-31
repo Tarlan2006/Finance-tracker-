@@ -93,7 +93,7 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   async applyConfig(plan: ConfigPlan) {
     const tables = await this.readConfigTables();
     const journal = plan.moves.length ? (await this.values([`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A1:H1006`]))[0]?.values || [] : [];
-    verifyPlan(plan, tables, journal);
+    await verifyPlan(plan, tables, journal);
     const data = [...plan.moves.filter(m => journal[m.row - 1]?.[2] === m.from).map(m => ({ range: `${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!C${m.row}`, values: [[m.to]] })), ...plan.writes.map(w => ({ range: `${quoteSheet(w.sheet)}!A${w.row}:H${w.row}`, values: [w.after] }))];
     // One atomic RAW request: journal C and settings revisions commit together.
     if (data.length) await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });

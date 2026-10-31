@@ -63,7 +63,11 @@ export class ConfigApi {
       if (b.targetId) { const destination = config.categories.find(c => c.id === b.targetId && !c.archived && c.id !== id); if (!old || !destination || !category.archived) throw new AppError(422, 'target', 'Выберите активную категорию для переноса'); target = categoryLabel(destination); }
       if (old && (target !== categoryLabel(old) || dry || b.previewHash !== undefined)) {
         const snapshot = await this.adapter.read(false);
-        const moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target, identity: moveIdentity(row) }] : []);
+        const from = categoryLabel(old);
+        const affected = snapshot.rows.flatMap((cells, i) => i > 0 && cells[2] === from ? [{ row: i + 1, cells }] : []);
+        const moves = await Promise.all(affected.map(async ({ row, cells }) => ({
+          row, from, to: target, identity: await moveIdentity(cells)
+        })));
         previewCount = moves.length;
         previewHash = await digest(JSON.stringify([old.id, old.rev, target, moves]));
         if (!dry && b.previewHash !== undefined && b.previewHash !== previewHash) throw configConflict();
@@ -92,7 +96,7 @@ export class ConfigApi {
       planRows(tables, ITEM_SHEET, changes.map(itemRow), plan);
     }
     if (dry) return { count: previewCount, previewHash };
-    // Durable Object values are limited to 128 KiB. A full journal rename needs chunks.
+    // Persist bounded chunks so a full-journal rename can resume safely.
     const chunks = Math.max(1, Math.ceil(Math.max(plan.writes.length, plan.moves.length) / 50));
     for (let i = 0; i < chunks; i++) await this.operations.put(`${key}:${i}`, { writes: plan.writes.slice(i * 50, (i + 1) * 50), moves: plan.moves.slice(i * 50, (i + 1) * 50) });
     const receipt: Receipt = { signature, chunks, done: false, count: plan.moves.length };
