@@ -5,40 +5,42 @@
     {
       "name": "navigation",
       "longTasks": [
-        161
+        195
       ],
       "cls": 0,
       "inputLayoutShift": 0,
-      "frameP95": 33.299999999999955,
-      "frameMax": 216.5999999999999
+      "frameP95": 33.399999999999864,
+      "frameMax": 266.60000000000014
     },
     {
       "name": "sheet-open",
       "longTasks": [
-        115
+        104
       ],
       "cls": 0,
       "inputLayoutShift": 0,
       "frameP95": 16.800000000000182,
-      "frameMax": 116.69999999999982
+      "frameMax": 100
     },
     {
       "name": "sheet-close",
       "longTasks": [
-        53
+        57
       ],
       "cls": 0,
       "inputLayoutShift": 0,
       "frameP95": 16.800000000000182,
-      "frameMax": 49.899999999999636
+      "frameMax": 50
     },
     {
       "name": "week-month",
-      "longTasks": [],
+      "longTasks": [
+        52
+      ],
       "cls": 0,
       "inputLayoutShift": 0.04609909359818772,
-      "frameP95": 16.800000000000182,
-      "frameMax": 33.400000000000546
+      "frameP95": 16.799999999999272,
+      "frameMax": 50
     },
     {
       "name": "ring-selection",
@@ -46,7 +48,7 @@
       "cls": 0,
       "inputLayoutShift": 0.0003612229794626087,
       "frameP95": 16.800000000000182,
-      "frameMax": 33.30000000000018
+      "frameMax": 33.399999999999636
     }
   ]
 }
