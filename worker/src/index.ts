@@ -4,10 +4,11 @@ import { isMock } from './env';
 import { GoogleSheetsAdapter } from './google-sheets';
 import { MockSheetsAdapter } from './mock-sheets';
 import { Api, errorResponse } from './router';
+import type { OperationStorage } from './config-store';
 // All API requests for this application share one globally addressable actor.
 export class SheetCoordinator {
   private api: Api;
-  constructor(_state: unknown, env: Env) { this.api = new Api(env, isMock(env) ? new MockSheetsAdapter(env.TZ) : new GoogleSheetsAdapter(env)); }
+  constructor(state: { storage?: OperationStorage }, env: Env) { this.api = new Api(env, isMock(env) ? new MockSheetsAdapter(env.TZ) : new GoogleSheetsAdapter(env), state.storage); }
   fetch(request: Request) { return this.api.fetch(request); }
 }
 export default {

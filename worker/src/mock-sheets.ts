@@ -2,12 +2,16 @@ import { calendarDate } from '../../shared/dates';
 import { fromDateCell, serialDate, shiftMonth, today } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
+import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const mockCategories: Category[] = [
   ['🍔 Продукты и супермаркеты', 60000], ['☕ Кафе и рестораны', 40000], ['🚗 Транспорт и такси', 20000],
   ['🎁 Подарки', 50000], ['💊 Здоровье и аптеки(+для себя)', 30000], ['🛍️ Покупки и одежда', 30000],
   ['🎬 Развлечения и досуг', 30000], ['📚 Образование и курсы', 20000], ['⚡ Непредвиденные расходы', 15000]
 ].map(([name, limit]) => ({ name: String(name), limit: Number(limit) }));
 export class MockSheetsAdapter implements SheetsAdapter {
+  tables: ConfigTables = { categories: null, items: null, capacity: { [CATEGORY_SHEET]: 1006, [ITEM_SHEET]: 1006 } };
+  readonly configWrites: ConfigPlan[] = [];
+  readonly createdSheets: string[] = [];
   rows: Row[];
   readonly formulaAmount = '=1282+574+430+380';
   readonly writes: { row: number; ranges: string[] }[] = [];
@@ -40,4 +44,8 @@ export class MockSheetsAdapter implements SheetsAdapter {
   }
   async clear(row: number) { this.assertRow(row); const old = this.rows[row - 1] || []; this.rows[row - 1] = ['', '', '', '', '', old[5] ?? '', '', '']; this.writes.push({ row, ranges: [`A${row}:E${row}`, `G${row}:H${row}`] }); }
   private assertRow(row: number) { if (!Number.isInteger(row) || row < 2) throw new Error('Нельзя менять заголовки'); }
+  async readConfigTables() { return structuredClone(this.tables); }
+  async readLegacyItems() { return { income: [['2026-09', 200000, 52000], ['2026-10', 200000, 60000], ['2026-11', '', ''], ['2026-12', '', '']], fixed: [['2026-09', 730, 24000, 5432, 60000], ['2026-10', 730, 24000, 9000, 60000]] }; }
+  async createConfigSheets() { if (!this.tables.categories) { this.tables.categories = []; this.createdSheets.push(CATEGORY_SHEET); } if (!this.tables.items) { this.tables.items = []; this.createdSheets.push(ITEM_SHEET); } }
+  async applyConfig(plan: ConfigPlan) { verifyPlan(plan, this.tables, this.rows); for (const move of plan.moves) this.rows[move.row - 1][2] = move.to; for (const write of plan.writes) (write.sheet === CATEGORY_SHEET ? this.tables.categories! : this.tables.items!)[write.row - 1] = structuredClone(write.after); this.configWrites.push(structuredClone(plan)); }
 }

@@ -5,12 +5,16 @@ import { isMock } from './env';
 import { Auth } from './auth';
 import type { SheetsAdapter } from './sheets';
 import { securityHeaders } from './headers';
+import { ConfigApi } from './config-api';
+import { configCategories } from '../../shared/config';
+import type { OperationStorage } from './config-store';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
 export class Api {
   private auth: Auth;
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(private env: Env, private adapter: SheetsAdapter) { this.auth = new Auth(env.APP_KEY || ''); }
+  private config: ConfigApi;
+  constructor(private env: Env, private adapter: SheetsAdapter, operations?: OperationStorage) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
   async fetch(request: Request): Promise<Response> {
     try {
       const origin = request.headers.get('Origin');
@@ -24,7 +28,8 @@ export class Api {
     } catch (e) { return errorResponse(e); }
   }
   private async snapshot() {
-    const s = await this.adapter.read();
+    const config = await this.config.read(), s = await this.adapter.read(!config.configured);
+    if (config.configured) s.categories = configCategories(config.categories).filter(c => !c.archived);
     if (s.rows[0]?.[6] !== 'ID' || s.rows[0]?.[7] !== 'Источник') throw new AppError(422, 'headers', 'Добавь столбцы G и H: G1 = ID, H1 = Источник');
     return s;
   }
@@ -49,18 +54,21 @@ export class Api {
   }
   private async route(request: Request): Promise<Response> {
     const url = new URL(request.url), path = url.pathname, method = request.method;
+    if (path === '/api/config' && method === 'GET') return json(await this.config.read());
+    if (path === '/api/config/setup' && method === 'POST') return json(await this.config.setup());
+    if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));
     const known = ['/api/bootstrap', '/api/expenses', '/api/quick', '/api/export.csv'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
     if (!known) throw new AppError(404, 'not_found', 'Маршрут не найден');
     const s = await this.snapshot(), history = expensesFromRows(s.rows);
     const month = validMonth(url.searchParams.get('month') || today(this.env.TZ).slice(0, 7));
     const expenses = history.filter(e => e.date.startsWith(month));
-    if (method === 'GET' && path === '/api/bootstrap') return json({ categories: s.categories, expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
+    if (method === 'GET' && path === '/api/bootstrap') return json({ categories: s.categories, config: await this.config.read(), expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
     if (method === 'GET' && path === '/api/expenses') return json({ expenses });
     if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="expenses-${month}.csv"`, 'Cache-Control': 'no-store' } });
     if (method === 'POST' && path === '/api/expenses') { const result = await this.create(await this.body(request), s); return json(result, result.duplicate ? 200 : 201); }
     if (method === 'POST' && path === '/api/quick') {
       const b = await this.body(request), amount = parseAmount(b.amount), name = clean(b.merchant);
-      const hint = suggestion(name, history);
+      const hint = suggestion(name, history.filter(e => s.categories.some(c => c.name === e.category)));
       if (b.save !== true && b.save !== 1) return json({ suggestion: hint });
       // Automatic clients must retain their event ID across retries.
       const input: ExpenseInput = { id: clean(b.id), date: today(this.env.TZ), amount, name, category: hint.confidence >= .6 ? hint.category : '', comment: '', source: b.src === 'kaspi' ? 'kaspi-auto' : 'wallet-auto' };

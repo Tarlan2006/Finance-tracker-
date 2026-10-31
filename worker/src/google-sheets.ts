@@ -3,6 +3,7 @@ import type { Category, ExpenseInput, Row, Snapshot, Summary } from '../../share
 import type { Env } from './env';
 import { GoogleAuth, retryFetch } from './google-auth';
 import type { SheetsAdapter } from './sheets';
+import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const quoteSheet = (name: string) => `'${name.replace(/'/g, "''")}'`;
 export class GoogleSheetsAdapter implements SheetsAdapter {
   private auth: GoogleAuth;
@@ -10,15 +11,15 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   constructor(private env: Env, private fetcher: typeof fetch = fetch) { this.auth = new GoogleAuth(env.GOOGLE_SERVICE_ACCOUNT_JSON || '', fetcher); }
   private async request(path: string, init: RequestInit = {}) {
     if (!this.env.SHEET_ID) throw new AppError(503, 'configuration', 'SHEET_ID не настроен');
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.env.SHEET_ID)}/${path}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.env.SHEET_ID)}${/^[?:]/.test(path) ? '' : '/'}${path}`;
     const call = async () => retryFetch(this.fetcher, url, { ...init, headers: { Authorization: `Bearer ${await this.auth.token()}`, 'Content-Type': 'application/json' } });
     let response = await call();
     if (response.status === 401) { this.auth.invalidate(); response = await call(); }
     if (!response.ok) throw new AppError(503, 'sheets', 'Google Sheets недоступен. Проверьте доступ сервисного аккаунта и названия листов');
-    return response.json() as Promise<{ valueRanges?: { values?: Row[] }[] }>;
+    return response.json() as Promise<{ valueRanges?: { values?: Row[] }[]; sheets?: { properties: { title: string; gridProperties: { rowCount: number } } }[] }>;
   }
-  async read(): Promise<Snapshot> {
-    const needsDict = !this.categories || this.categories.until <= Date.now();
+  async read(legacy = true): Promise<Snapshot> {
+    const needsDict = legacy && (!this.categories || this.categories.until <= Date.now());
     const ranges = [`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A:H`, `${quoteSheet(this.env.SHEET_NAME_INCOME)}!M3:S`];
     if (needsDict) ranges.push(`${quoteSheet(this.env.SHEET_NAME_DICT)}!A3:B`);
     const query = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
@@ -43,7 +44,7 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
       if (row.slice(1, 7).length < 6 || row.slice(1, 7).some(x => typeof x !== 'number' || !Number.isFinite(x))) return [];
       return [{ month, income: Number(row[1]), fixed: Number(row[2]), journal: Number(row[3]), total: Number(row[4]), balance: Number(row[5]), savings: Number(row[6]) }];
     });
-    return { rows: values[0]?.values || [], categories: this.categories!.items, summaries };
+    return { rows: values[0]?.values || [], categories: legacy ? this.categories!.items : [], summaries };
   }
   private ranges(row: number) {
     if (!Number.isSafeInteger(row) || row < 2) throw new AppError(422, 'row', 'Нельзя менять заголовки');
@@ -56,4 +57,25 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
     await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: first, values: [[serialDate(e.date), e.name, e.category, e.amount, e.comment]] }, { range: last, values: [[e.id, e.source]] }] }) });
   }
   async clear(row: number) { await this.request('values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: this.ranges(row) }) }); }
+  private async metadata() { return (await this.request('?fields=sheets.properties(title,gridProperties.rowCount)')).sheets || []; }
+  private async values(ranges: string[]) { const query = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' }); ranges.forEach(r => query.append('ranges', r)); return (await this.request(`values:batchGet?${query}`)).valueRanges || []; }
+  async readConfigTables(): Promise<ConfigTables> {
+    const sheets = await this.metadata(), names = [CATEGORY_SHEET, ITEM_SHEET] as const, existing = names.filter(name => sheets.some(s => s.properties.title === name));
+    const values = existing.length ? await this.values(existing.map(n => `${quoteSheet(n)}!A:H`)) : [];
+    return { categories: existing.includes(CATEGORY_SHEET) ? values[existing.indexOf(CATEGORY_SHEET)]?.values || [] : null, items: existing.includes(ITEM_SHEET) ? values[existing.indexOf(ITEM_SHEET)]?.values || [] : null, capacity: { [CATEGORY_SHEET]: sheets.find(s => s.properties.title === CATEGORY_SHEET)?.properties.gridProperties.rowCount || 1006, [ITEM_SHEET]: sheets.find(s => s.properties.title === ITEM_SHEET)?.properties.gridProperties.rowCount || 1006 } };
+  }
+  async readLegacyItems() { const values = await this.values([`${quoteSheet(this.env.SHEET_NAME_INCOME)}!A3:D`, `${quoteSheet(this.env.SHEET_NAME_INCOME)}!F3:K`]); return { income: values[0]?.values || [], fixed: values[1]?.values || [] }; }
+  async createConfigSheets() {
+    const sheets = await this.metadata();
+    const requests = [CATEGORY_SHEET, ITEM_SHEET].filter(name => !sheets.some(s => s.properties.title === name)).map(title => ({ addSheet: { properties: { title, gridProperties: { rowCount: 1006, columnCount: 8 } } } }));
+    if (requests.length) { try { await this.request(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) }); } catch (error) { const after = await this.metadata(); if (![CATEGORY_SHEET, ITEM_SHEET].every(n => after.some(s => s.properties.title === n))) throw error; } }
+  }
+  async applyConfig(plan: ConfigPlan) {
+    const tables = await this.readConfigTables();
+    const journal = plan.moves.length ? (await this.values([`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A1:C1006`]))[0]?.values || [] : [];
+    verifyPlan(plan, tables, journal);
+    const data = [...plan.moves.filter(m => journal[m.row - 1]?.[2] === m.from).map(m => ({ range: `${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!C${m.row}`, values: [[m.to]] })), ...plan.writes.map(w => ({ range: `${quoteSheet(w.sheet)}!A${w.row}:H${w.row}`, values: [w.after] }))];
+    // One atomic RAW request: journal C and settings revisions commit together.
+    if (data.length) await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
+  }
 }
