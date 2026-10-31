@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { looksDuplicate, today, validateExpense } from '../../../shared/logic';
-import type { Bootstrap, Expense, ExpenseInput } from '../../../shared/types';
+import type { Bootstrap, Config, ConfigItem, Expense, ExpenseInput } from '../../../shared/types';
+import { configCategories } from '../../../shared/config';
 import { api } from './api';
 import { storage } from './storage';
 import { readCachedBootstrap } from './data';
@@ -10,15 +11,17 @@ export function useFinance() {
   const [data, setData] = useState<Bootstrap | null>(null), [queue, setQueue] = useState<Queued[]>([]);
   const [online, setOnline] = useState(navigator.onLine), [error, setError] = useState(''), [toast, setToast] = useState(''), [loading, setLoading] = useState(false);
   const [deletions, setDeletions] = useState<Expense[]>([]), timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const [itemDeletions, setItemDeletions] = useState<ConfigItem[]>([]), itemTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [duplicate, setDuplicate] = useState<{ expense: ExpenseInput; resolve: (yes: boolean) => void } | null>(null);
   const session = useRef(key), sequence = useRef(0), knownQueue = useRef(queue), toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const loadedMonths = useRef(new Set<string>()), pendingMonths = useRef(new Map<string, Promise<void>>());
   knownQueue.current = queue;
   const showError = useCallback((e: unknown) => setError(e instanceof Error ? e.message : 'Не удалось выполнить действие. Повторите'), []);
   const notify = useCallback((text: string) => { clearTimeout(toastTimer.current); setToast(text); toastTimer.current = setTimeout(() => setToast(''), 5000); }, []);
-  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
+  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); itemTimers.current.forEach(clearTimeout); itemTimers.current.clear(); setItemDeletions([]); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
   useEffect(() => { const changed = (event: StorageEvent) => { if (event.key === 'app-key' && event.newValue !== session.current) closeSession(); }; window.addEventListener('storage', changed); return () => window.removeEventListener('storage', changed); }, [closeSession]);
   useEffect(() => { const pending = timers.current; return () => { pending.forEach(clearTimeout); clearTimeout(toastTimer.current); }; }, []);
+  useEffect(() => { const pending = itemTimers.current; return () => pending.forEach(clearTimeout); }, []);
   const reload = useCallback(async () => {
     if (!key || !owner || session.current !== key) return;
     const request = ++sequence.current;
@@ -64,11 +67,22 @@ export function useFinance() {
     await enqueue(e, owner); if (session.current !== key) return false; setQueue(await allQueued(owner)); notify(navigator.onLine ? 'Сохранено · отправляется в таблицу' : 'Сохранено в очередь'); void sync(); return true;
   }
   async function edit(e: Expense, patch: Partial<Expense>) { await api(`expenses/${e.row}`, key, { method: 'PATCH', body: JSON.stringify({ ...patch, fp: e.fp }) }); await reload(); notify('Изменения сохранены'); }
+  async function changeConfig(path: string, body: Record<string, unknown>): Promise<{ config?: Config; count?: number }> {
+    if (session.current !== key) throw new Error('Войдите заново');
+    const result = await api<Config | { config?: Config; count?: number }>(path, key, { method: 'POST', body: JSON.stringify(body) });
+    if (session.current !== key) throw new Error('Сеанс завершён');
+    if (path.includes('dry=1')) return result as { count: number };
+    const config = 'configured' in result ? result : result.config;
+    if (config) setData(current => current ? { ...current, config, categories: configCategories(config.categories).filter(c => !c.archived) } : current);
+    await reload(); notify('Настройки сохранены'); return { config };
+  }
+  function removeItem(item: ConfigItem, month: string) { if (itemTimers.current.has(item.id)) return; setItemDeletions(items => [...items, item]); const operationId = crypto.randomUUID(); itemTimers.current.set(item.id, setTimeout(() => { itemTimers.current.delete(item.id); setItemDeletions(items => items.filter(i => i.id !== item.id)); void changeConfig(`config/items/${item.id}`, { operationId, rev: item.rev, month, remove: true }).catch(showError).finally(() => setItemDeletions(items => items.filter(i => i.id !== item.id))); }, 5000)); }
+  function undoItem(item: ConfigItem) { clearTimeout(itemTimers.current.get(item.id)); itemTimers.current.delete(item.id); setItemDeletions(items => items.filter(i => i.id !== item.id)); }
   function remove(e: Expense) { if (timers.current.has(e.row)) return; setDeletions(items => [...items, e]); navigator.vibrate?.(15); timers.current.set(e.row, setTimeout(() => { timers.current.delete(e.row); void (async () => { try { await api(`expenses/${e.row}`, key, { method: 'DELETE', body: JSON.stringify({ fp: e.fp }) }); await reload(); notify('Запись удалена'); } catch (e) { showError(e); } finally { setDeletions(items => items.filter(x => x.row !== e.row)); } })(); }, 5000)); }
   function undo(e: Expense) { clearTimeout(timers.current.get(e.row)); timers.current.delete(e.row); setDeletions(items => items.filter(x => x.row !== e.row)); }
   async function logout() { try { await setQueueKey(''); if (!storage.removeItem('app-key')) throw new Error(); storage.keys().filter(k => k.startsWith('bootstrap-')).forEach(k => storage.removeItem(k)); closeSession(); setError(''); return true; } catch { setError('Не удалось защитить очередь. Повторите выход'); return false; } }
-  async function exportCsv(month: string) { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok || !r.headers.get('Content-Type')?.includes('text/csv')) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()), a = document.createElement('a'); a.href = url; a.download = `expenses-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { showError(e); } }
-  return { key, keyInput, setKeyInput, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, error, toast, loading, duplicate, setDuplicate, deletions, undo, login, logout, save, edit, remove, reload, sync, exportCsv, loadMonths,
+  async function exportCsv(month: string) { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok || !r.headers.get('Content-Type')?.includes('text/csv')) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()), a = document.createElement('a'); a.href = url; a.download = `finance-tracker-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { showError(e); } }
+  return { key, keyInput, setKeyInput, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, error, toast, loading, duplicate, setDuplicate, deletions, itemDeletions, undoItem, undo, login, logout, save, edit, remove, reload, sync, exportCsv, loadMonths, changeConfig, removeItem,
     retry: (q: Queued) => void retryQueued(q).then(sync).catch(showError), removeQueue: (q: Queued) => void discardQueued(q).then(sync).catch(showError),
     editQueue: async (q: Queued, patch: Partial<Expense>) => { const expense = validateExpense({ ...q.expense, ...patch }, data!.categories, data!.tz); await changeQueued(q, expense); await sync(); }
   };

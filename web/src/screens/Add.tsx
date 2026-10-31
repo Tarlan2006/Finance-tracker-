@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clean, parseAmount, shiftDate, suggestion, today } from '../../../shared/logic';
 import type { Bootstrap, ExpenseInput } from '../../../shared/types';
+import { categoryEmoji, categoryTitle } from '../../../shared/analytics';
 import { animate, duration, reducedMotion, token } from '../motion';
 import Icon from './Icon';
 import NameInput from './NameInput';
 export interface Draft { amount: string; name: string; source: string; ts?: number }
 export default function Add({ data, draft, save, money }: { data: Bootstrap; draft: Draft; save: (e: ExpenseInput, ts?: number) => Promise<boolean>; money: (n: number) => string }) {
+  const activeHistory = data.history.filter(e => data.categories.some(c => c.name === e.category && !c.archived));
   const form = useRef<HTMLElement>(null), saveButton = useRef<HTMLButtonElement>(null);
   const [amount, setAmount] = useState(draft.amount), [name, setName] = useState(draft.name);
-  const [category, setCategory] = useState(suggestion(draft.name, data.history).category);
+  const [category, setCategory] = useState(suggestion(draft.name, activeHistory).category);
+  useEffect(() => { if (category && !data.categories.some(c => c.name === category && !c.archived)) setCategory(''); }, [category, data.categories]);
   const [date, setDate] = useState(today(data.tz)), [comment, setComment] = useState(''), [error, setError] = useState('');
   useEffect(() => { if (error) animate(form.current?.querySelector('.amount-card') || null, [{ transform: 'translateX(0)' }, { transform: `translateX(-${token('motion-error')})` }, { transform: `translateX(${token('motion-error')})` }, { transform: 'translateX(0)' }]); }, [error]);
   const [dateMode, setDateMode] = useState<'today' | 'yesterday' | 'custom'>('today');
@@ -29,8 +32,8 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
   }, []);
   const lock = useRef(false), id = useRef(`${Date.now()}-${crypto.randomUUID()}`);
   let total = 0; try { total = parseAmount(amount); } catch { /* incomplete expression while typing */ }
-  const categories = useMemo(() => { const counts = new Map<string, number>(); data.history.forEach(e => counts.set(e.category, (counts.get(e.category) || 0) + 1)); return [...data.categories].sort((a, b) => (counts.get(b.name) || 0) - (counts.get(a.name) || 0)); }, [data.categories, data.history]);
-  function applyName(value: string) { setName(value); const hint = suggestion(value, data.history); if (hint.category) setCategory(hint.category); }
+  const categories = useMemo(() => { if (data.config?.configured) return data.categories.filter(c => !c.archived); const counts = new Map<string, number>(); data.history.forEach(e => counts.set(e.category, (counts.get(e.category) || 0) + 1)); return [...data.categories].sort((a, b) => (counts.get(b.name) || 0) - (counts.get(a.name) || 0)); }, [data.categories, data.history, data.config?.configured]);
+  function applyName(value: string) { setName(value); const hint = suggestion(value, activeHistory); if (hint.category) setCategory(hint.category); }
   async function submit() {
     if (lock.current) return;
     try {
@@ -54,8 +57,8 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
     <div className="amount-card"><label htmlFor="amount">Сколько потратили?</label><div className="amount-line"><input id="amount" aria-label="Сумма" value={amount || '0'} readOnly inputMode="none"/><span>{data.currency}</span></div><div className="amount-caption">{amount.includes('+') ? `Итого: ${money(total)}` : 'В тенге. Название можно не указывать.'}</div></div>
     <div className="keypad" aria-label="Цифровая клавиатура">{['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '000', '+', '⌫'].map(key => <button key={key} type="button" aria-label={key === '⌫' ? 'Стереть цифру' : key === ',' ? 'Запятая' : key === '+' ? 'Плюс' : key} className={key === '⌫' ? 'backspace' : ''} onClick={() => setAmount(v => key === '⌫' ? v.slice(0, -1) : (v + key).slice(0, 32))}>{key === '⌫' ? <Icon name="erase"/> : key === '+' ? <Icon name="plus"/> : key}</button>)}</div>
     <div className="label-row"><h2>Категория</h2><span>{category ? 'Выбрана ✓' : 'Выберите одну'}</span></div>
-    <div className="category-grid">{categories.map(c => { const space = c.name.indexOf(' '); return <button type="button" key={c.name} className={category === c.name ? 'category selected' : 'category'} aria-pressed={category === c.name} aria-label={c.name} title={c.name} onClick={() => { setCategory(c.name); setError(''); }}><span className="category-emoji">{space < 0 ? '•' : c.name.slice(0, space)}</span><span className="category-label">{space < 0 ? c.name : c.name.slice(space + 1)}</span></button>; })}</div>
-    <NameInput value={name} onChange={applyName} history={data.history}/>
+    <div className="category-grid">{categories.map(c => <button type="button" key={c.name} className={category === c.name ? 'category selected' : 'category'} aria-pressed={category === c.name} aria-label={c.name} title={c.name} onClick={() => { setCategory(c.name); setError(''); }}><span className="category-emoji">{categoryEmoji(c.name)}</span><span className="category-label">{categoryTitle(c.name)}</span></button>)}</div>
+    <NameInput value={name} onChange={applyName} history={activeHistory}/>
     <div className="date-row"><button aria-pressed={dateMode === 'today'} className={dateMode === 'today' ? 'chip active' : 'chip'} onClick={() => { setDateMode('today'); setDate(today(data.tz)); }}>Сегодня</button><button aria-pressed={dateMode === 'yesterday'} className={dateMode === 'yesterday' ? 'chip active' : 'chip'} onClick={() => { setDateMode('yesterday'); setDate(shiftDate(today(data.tz), -1)); }}>Вчера</button><input aria-label="Дата расхода" type="date" value={date} max={shiftDate(today(data.tz), 1)} onChange={e => { setDateMode('custom'); setDate(e.target.value); }}/></div>
     {dateMode !== 'today' && <p className="date-notice" role="status">Дата записи: {date} · {dateMode === 'yesterday' ? 'выбрано «Вчера»' : 'выбрана вручную'}</p>}
     <details className="comment-details"><summary>Добавить комментарий</summary><textarea aria-label="Комментарий" maxLength={200} value={comment} onChange={e => setComment(e.target.value)}/></details>

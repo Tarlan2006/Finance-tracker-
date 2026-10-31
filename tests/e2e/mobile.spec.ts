@@ -48,12 +48,11 @@ test('правка, отмена удаления и удаление без с�
 test('обзор сверяется с mock и читается в обеих темах', async ({ page }, info) => {
   await login(page); const b = await bootstrap(page); const amount = b.expenses.reduce((s: number, e: { amount: number }) => s + e.amount, 0); const formatted = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(amount) + ' ₸';
   await navigate(page, 'Обзор'); await expect(page.getByTestId('overview-total')).toHaveText(formatted); await expect(page.getByRole('heading', { name: 'По категориям' })).toBeVisible();
-  const unexpected = b.expenses.filter((e: { category: string }) => /непредвиденные/i.test(e.category)).reduce((s: number, e: { amount: number }) => s + e.amount, 0);
-  await expect(page.locator('.stat-card').filter({ hasText: 'Непредвиденные' }).locator('strong')).toHaveAttribute('aria-label', new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(unexpected) + ' ₸');
+  await expect(page.locator('.stat-card').filter({ hasText: 'Личные расходы' }).locator('strong')).toHaveAttribute('aria-label', new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(b.expenses.reduce((s: number, e: { amount: number }) => s + e.amount, 0)) + ' ₸');
   await page.screenshot({ path: `tests/screenshots/design/regression/overview-${info.project.name}.png`, fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await navigate(page, 'Ещё'); await page.screenshot({ path: `tests/screenshots/design/regression/more-${info.project.name}.png`, fullPage: true });
-  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Экспорт CSV за месяц' }).click(); expect((await download).suggestedFilename()).toMatch(/expenses-.*\.csv/);
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Экспорт CSV за месяц' }).click(); expect((await download).suggestedFilename()).toMatch(/finance-tracker-.*\.csv/);
   const manifest = await page.request.get('/manifest.webmanifest'); const m = await manifest.json(); expect(m.display).toBe('standalone'); for (const icon of m.icons) expect((await page.request.get(icon.src)).ok()).toBe(true);
 });
 test('ошибка 422 остаётся в очереди, исправление отправляет одну запись', async ({ page }) => {
