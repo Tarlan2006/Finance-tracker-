@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
 const base = process.argv[2];
 if (!base || !/^https:\/\/finance-tracker\.tarlan-b06\.workers\.dev\/?$/.test(base)) throw new Error('Передайте HTTPS URL finance-tracker на workers.dev');
+const publicOnly = process.argv.includes('--public-only');
 let platformRetries = 0;
 async function read(path, headers = {}) {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -38,7 +39,7 @@ function verifySummaries(b, expectedCount) {
 }
 let sessionToken = '';
 try {
-  const vars = { ...parseEnv(await readFile('.dev.vars', 'utf8').catch(() => '')), ...process.env };
+  const vars = publicOnly ? {} : { ...parseEnv(await readFile('.dev.vars', 'utf8').catch(() => '')), ...process.env };
   const health = await read('/api/health');
   if (!health.ok || !(await health.json()).ok) throw new Error('health не прошёл');
   const unauthorized = await read('/api/bootstrap');
@@ -49,7 +50,7 @@ try {
   for (const r of [health, unauthorized, accountsResponse, shell]) if (!r.headers.get('Content-Security-Policy')?.includes("frame-ancestors 'none'") || r.headers.get('X-Content-Type-Options') !== 'nosniff' || r.headers.get('Referrer-Policy') !== 'no-referrer') throw new Error('Security headers missing');
   for (const r of [health, unauthorized, accountsResponse]) if (r.headers.get('Cache-Control') !== 'no-store') throw new Error('API cache policy missing');
   const result = { url: base, health: true, unauthorizedStatus: 401, securityHeaders: true, accounts: accounts.map(a => a.login), liveRead: false, sheetsWrites: 0, adminCalls: 0 };
-  if (!vars.VERIFY_LOGIN || !vars.VERIFY_PASSWORD) { console.log(JSON.stringify({ ...result, skipped: 'VERIFY_LOGIN/VERIFY_PASSWORD не заданы: чтение данных пропущено', platformRetries }, null, 2)); }
+  if (!vars.VERIFY_LOGIN || !vars.VERIFY_PASSWORD) { console.log(JSON.stringify({ ...result, skipped: publicOnly ? 'Публичная GET-проверка без входа' : 'VERIFY_LOGIN/VERIFY_PASSWORD не заданы: чтение данных пропущено', platformRetries }, null, 2)); }
   else {
     const login = await fetch(new URL('/api/login', base), { redirect: 'error', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: vars.VERIFY_LOGIN, password: vars.VERIFY_PASSWORD }), signal: AbortSignal.timeout(20000) });
     if (!login.ok) throw new Error('Не удалось войти проверочным аккаунтом, HTTP ' + login.status);
