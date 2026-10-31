@@ -1,3 +1,4 @@
+import { savedSession } from '../lib/account';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { budgetStatus, categoryTotals, categoryTitle, colorIndex, dailyTotals, inPeriod, movePeriod, periodFor, periodLabel, periodMonths, periodStats, ringSegments, type CategoryTotal, type JournalFilter, type PeriodMode } from '../../../shared/analytics';
 import { dateLabel } from '../lib/format';
@@ -14,7 +15,7 @@ function Preview({ rows, money, title, showAll }: { rows: Expense[]; money: (n: 
   return <div className="expense-preview"><div className="label-row"><h3>{title}</h3><span>{rows.length}</span></div>{[...rows].sort((a, b) => b.date.localeCompare(a.date) || b.row - a.row).slice(0, 5).map(e => <div key={e.row} className="preview-row"><span>{displayName(e)}<small>{dateLabel(e.date, { day: 'numeric', month: 'short' })}</small></span><strong>{money(e.amount)}</strong></div>)}{!rows.length ? <p className="muted">В этот день трат не было</p> : <button className="text-button" onClick={showAll}>Показать все<Icon name="next"/></button>}</div>;
 }
 export default function Overview({ data, money, loadMonths, showExpenses }: { data: Bootstrap; money: (n: number) => string; loadMonths: (months: string[]) => Promise<void>; showExpenses: (filter: JournalFilter) => void }) {
-  const [mode, setMode] = useState<PeriodMode>(storage.getItem('overview-mode') === 'week' ? 'week' : 'month');
+  const [mode, setMode] = useState<PeriodMode>(storage.getItem(`overview-mode:${savedSession()?.account.id || 'login'}`) === 'week' ? 'week' : 'month');
   const currentDay = today(data.tz), [anchor, setAnchor] = useState(currentDay), [selectedDay, setSelectedDay] = useState<string | null>(null), [selected, setSelected] = useState<string | null>(null);
   const period = useMemo(() => periodFor(anchor, mode), [anchor, mode]), stats = useMemo(() => periodStats(data.history, period, currentDay), [data.history, period, currentDay]);
   const rows = useMemo(() => inPeriod(data.history, period), [data.history, period]), days = dailyTotals(rows, period), maximum = Math.max(...days.map(d => d.amount), 1);
@@ -30,7 +31,7 @@ export default function Overview({ data, money, loadMonths, showExpenses }: { da
   useEffect(() => { const outside = (event: PointerEvent) => { if (!chart.current?.contains(event.target as Node)) setSelectedDay(null); }; document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside); }, []);
   useFlip(chart, `${mode}|${period.start}`, '.bar-button', false);
   useLayoutEffect(() => { animate(chart.current, [{ opacity: .5, transform: `translateX(${direction.current * parseFloat(token('motion-distance'))}px)` }, { opacity: 1, transform: 'none' }]); }, [period.start]);
-  const changeMode = (value: PeriodMode) => { setMode(value); storage.setItem('overview-mode', value); setSelected(null); setSelectedDay(null); };
+  const changeMode = (value: PeriodMode) => { setMode(value); storage.setItem(`overview-mode:${savedSession()?.account.id || 'login'}`, value); setSelected(null); setSelectedDay(null); };
   const move = (step: number) => { if (step < 0 ? !canBack : !canNext) return; direction.current = step; setAnchor(movePeriod(period, step).start); setSelected(null); setSelectedDay(null); };
   const toggle = (value: string) => setSelected(previous => previous === value ? null : value);
   const summary = budget(data, data.history, period.end.slice(0, 7), currentDay);
