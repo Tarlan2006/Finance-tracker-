@@ -1,0 +1,37 @@
+import { expect, it } from 'vitest';
+import { AccountsService } from '../../worker/src/accounts';
+import { MemoryOperations } from '../../worker/src/config-store';
+import { Api } from '../../worker/src/router';
+import { MockSheetsAdapter } from '../../worker/src/mock-sheets';
+import { MockPreparation, TablePreparation, MONTH_FORMULA } from '../../worker/src/prepare-table';
+import type { Env } from '../../worker/src/env';
+const env: Env = { APP_KEY: 'fictional-integration-password', ADMIN_TOKEN: 'fictional-admin', USE_MOCK: '1', TZ: 'Asia/Almaty', CURRENCY: '₸', DUPLICATE_WINDOW_MIN: '3', SHEET_NAME_EXPENSES: 'Ввод данных', SHEET_NAME_DICT: 'Справочник', SHEET_NAME_INCOME: 'Доходы и расходы' };
+it('isolates every data route, overrides spoofed routing and does not serialize unrelated tables', async () => {
+  const actors = new Map<string, { api: Api; mock: MockSheetsAdapter }>();
+  const service = new AccountsService(new MemoryOperations(), { ...env, COORDINATOR: { idFromName: name => name, get: id => ({ fetch: async r => { const key = String(id); if (!actors.has(key)) { const mock = new MockSheetsAdapter(); actors.set(key, { mock, api: new Api(env, mock) }); } return actors.get(key)!.api.fetchAccount(r); } }) } });
+  const call = (path: string, token = '', body?: unknown, method = body ? 'POST' : 'GET') => service.fetch(new Request(`https://app.test/api/${path}`, { method, headers: { 'X-App-Key': token, Authorization: token === 'admin' ? 'Bearer fictional-admin' : '', 'X-FT-Account': 'tarlan', 'X-FT-Sheet': 'mock-tarlan-table-0000000000', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }));
+  const login = async (login: string, password: string) => (await (await call('login', '', { login, password })).json()).token;
+  const a = await login('tarlan', 'fictional-integration-password');
+  await call('admin/add', 'admin', { login: 'aru', displayName: 'Aru', password: 'fictional-aru-password' }); await call('admin/set-sheet', 'admin', { login: 'aru', sheet: 'fictional-aru-table-000000' });
+  const b = await login('aru', 'fictional-aru-password'); await call('bootstrap', a); await call('bootstrap', b);
+  const [ta, tb] = [...actors.values()]; ta.mock.rows[1][1] = 'PRIVATE-TARLAN'; tb.mock.rows[1][1] = 'PRIVATE-ARU';
+  for (const path of ['bootstrap', 'expenses', 'export.csv', 'config']) { const r = await call(`${path}?sheetId=mock-tarlan-table-0000000000&accountId=tarlan`, b); expect(r.status).toBe(200); expect(await r.text()).not.toContain('PRIVATE-TARLAN'); }
+  const original = structuredClone(ta.mock.rows), f = tb.mock.rows.map(r => r[5]);
+  const expense = { id: '1793332800000-fictional-expense-id', date: '2026-10-01', amount: 123, category: '🚗 Транспорт и такси', name: 'Only Aru', source: 'manual', sheetId: 'mock-tarlan-table-0000000000', accountId: 'tarlan' };
+  const saved = await (await call('expenses', b, expense)).json(); expect(ta.mock.rows).toEqual(original); expect(tb.mock.writes).toHaveLength(1);
+  expect((await call(`expenses/2`, b, { fp: 'tarlan-fingerprint', name: 'Attack' }, 'PATCH')).status).toBe(409);
+  expect((await call(`expenses/${saved.expense.row}`, b, { fp: saved.expense.fp }, 'DELETE')).status).toBe(200);
+  await call('config/setup', b, {}); expect(ta.mock.tables.categories).toBeNull(); expect(tb.mock.tables.categories).not.toBeNull(); expect(tb.mock.rows.map(r => r[5])).toEqual(f); expect(ta.mock.rows).toEqual(original);
+  let release!: () => void; const old = ta.mock.read.bind(ta.mock); ta.mock.read = async () => { await new Promise<void>(r => { release = r; }); return old(); };
+  const waiting = call('bootstrap', a); while (!release) await new Promise(r => setTimeout(r, 1));
+  const independent = await Promise.race([call('bootstrap', b).then(r => r.status), new Promise(r => setTimeout(() => r('blocked'), 1000))]); release(); await waiting; expect(independent).toBe(200);
+});
+it('preparation refuses existing sheets and recovers partial creation with owned IDs without duplication', async () => {
+  const mock = new MockSheetsAdapter(), store = new MemoryOperations(), backend = new MockPreparation(mock, 'Ввод данных', true), prep = new TablePreparation(backend, store, 'Ввод данных');
+  expect((await prep.status()).ready).toBe(false); const create = backend.create.bind(backend); let failed = false;
+  backend.create = async (p, missing) => { if (!failed) { failed = true; await create(p, missing.slice(0, 1)); throw new Error('fictional failure'); } await create(p, missing); };
+  await expect(prep.prepare()).rejects.toThrow(); expect((await prep.status()).ready).toBe(false); expect(backend.metadata).toHaveLength(1);
+  await prep.prepare(); await prep.prepare(); expect(backend.metadata).toHaveLength(3); expect(mock.rows).toHaveLength(1006); expect(mock.rows[1][5]).toBe(MONTH_FORMULA); expect(mock.tables.categories).toHaveLength(9); expect(mock.tables.items).toHaveLength(1); expect(mock.tables.categories!.slice(1).every(r => r[3] === 0)).toBe(true);
+  const api = new Api({ ...env, NATIVE_TABLE: '1' }, mock, store, prep); const r = await api.fetchAccount(new Request('https://app.test/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: '1793332800000-fictional-prepared-id', date: '2026-10-01', amount: 99, category: '🥦 Продукты', source: 'manual' }) })); expect(r.status).toBe(201); expect(mock.writes[0].ranges).toEqual(['A2:E2', 'G2:H2']); expect(mock.rows[1][5]).toBe(MONTH_FORMULA); expect((await mock.read()).summaries).toEqual([]);
+  const existing = new MockPreparation(new MockSheetsAdapter(), 'Ввод данных', false); await expect(new TablePreparation(existing, new MemoryOperations(), 'Ввод данных').prepare()).rejects.toThrow('уже есть'); expect(existing.metadata).toHaveLength(1);
+});

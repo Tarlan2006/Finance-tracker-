@@ -9,6 +9,7 @@ export const mockCategories: Category[] = [
   ['🎬 Развлечения и досуг', 30000], ['📚 Образование и курсы', 20000], ['⚡ Непредвиденные расходы', 15000]
 ].map(([name, limit]) => ({ name: String(name), limit: Number(limit) }));
 export class MockSheetsAdapter implements SheetsAdapter {
+  native = false;
   tables: ConfigTables = { categories: null, items: null, capacity: { [CATEGORY_SHEET]: 1006, [ITEM_SHEET]: 1006 } };
   readonly configWrites: ConfigPlan[] = [];
   readonly createdSheets: string[] = [];
@@ -34,7 +35,7 @@ export class MockSheetsAdapter implements SheetsAdapter {
       const journal = rows.slice(1).filter(r => typeof r[0] === 'number' && fromDateCell(r[0]).startsWith(m)).reduce((s, r) => s + Number(r[3]), 0);
       return { month: m, income: 450000, fixed: 85000, journal, total: 85000 + journal, balance: 365000 - journal, savings: .2 };
     });
-    return { rows, categories: structuredClone(mockCategories), summaries };
+    return { rows, categories: this.native ? [] : structuredClone(mockCategories), summaries: this.native ? [] : summaries };
   }
   async write(row: number, e: ExpenseInput) {
     this.assertRow(row);

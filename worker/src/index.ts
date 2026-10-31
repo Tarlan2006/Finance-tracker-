@@ -4,7 +4,8 @@ import { isMock } from './env';
 import { GoogleSheetsAdapter } from './google-sheets';
 import { MockSheetsAdapter } from './mock-sheets';
 import { Api, errorResponse } from './router';
-import type { OperationStorage } from './config-store';
+import { MemoryOperations, type OperationStorage } from './config-store';
+import { GooglePreparation, MockPreparation, TablePreparation } from './prepare-table';
 export { AccountsDO } from './accounts';
 // Each account/table pair has an independent serialized read/check/write actor.
 export class SheetCoordinator {
@@ -17,7 +18,7 @@ export class SheetCoordinator {
     if (!account || !sheet) return Promise.resolve(errorResponse(new AppError(401, 'unauthorized', 'Нет доступа')));
     const identity = `${account}:${sheet}`;
     if (this.identity && this.identity !== identity) return Promise.resolve(errorResponse(new AppError(403, 'scope', 'Другой аккаунт')));
-    if (!this.api) { this.identity = identity; const env = { ...this.env, APP_KEY: undefined, SHEET_ID: sheet }; this.api = new Api(env, isMock(env) ? new MockSheetsAdapter(env.TZ) : new GoogleSheetsAdapter(env), this.state.storage); }
+    if (!this.api) { this.identity = identity; const env = { ...this.env, APP_KEY: undefined, SHEET_ID: sheet }, operations = this.state.storage || new MemoryOperations(); const adapter = isMock(env) ? new MockSheetsAdapter(env.TZ) : new GoogleSheetsAdapter(env); const preparation = new TablePreparation(adapter instanceof MockSheetsAdapter ? new MockPreparation(adapter, env.SHEET_NAME_EXPENSES, account !== 'tarlan') : new GooglePreparation(env), operations, env.SHEET_NAME_EXPENSES); this.api = new Api(env, adapter, operations, preparation); }
     return this.api.fetchAccount(request);
   }
 }

@@ -8,13 +8,14 @@ import { securityHeaders } from './headers';
 import { ConfigApi } from './config-api';
 import { configCategories } from '../../shared/config';
 import type { OperationStorage } from './config-store';
+import type { TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
 export class Api {
   private auth: Auth;
   private tail: Promise<unknown> = Promise.resolve();
   private config: ConfigApi;
-  constructor(private env: Env, private adapter: SheetsAdapter, operations?: OperationStorage) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
+  constructor(private env: Env, private adapter: SheetsAdapter, operations?: OperationStorage, private preparation?: TablePreparation) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
   fetch(request: Request): Promise<Response> { return this.handle(request, false); }
   // Only SheetCoordinator calls this after AccountsDO resolved the session.
   fetchAccount(request: Request): Promise<Response> { return this.handle(request, true); }
@@ -57,6 +58,11 @@ export class Api {
   }
   private async route(request: Request): Promise<Response> {
     const url = new URL(request.url), path = url.pathname, method = request.method;
+    if (this.preparation) {
+      if (path === '/api/table/prepare' && method === 'POST') { const result = await this.preparation.prepare(); this.env.NATIVE_TABLE = '1'; return json(result); }
+      const status = await this.preparation.status(); if (status.native) this.env.NATIVE_TABLE = '1';
+      if (!status.ready) throw new AppError(409, 'table_uninitialized', 'Таблица подключена, но пуста');
+    }
     if (path === '/api/config' && method === 'GET') return json(await this.config.read());
     if (path === '/api/config/setup' && method === 'POST') { if (url.searchParams.has('dry')) throw new AppError(422, 'dry', 'Предпросмотр доступен только для категорий'); return json(await this.config.setup()); }
     if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));

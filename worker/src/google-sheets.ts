@@ -20,7 +20,8 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   }
   async read(legacy = true): Promise<Snapshot> {
     const needsDict = legacy && (!this.categories || this.categories.until <= Date.now());
-    const ranges = [`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A:H`, `${quoteSheet(this.env.SHEET_NAME_INCOME)}!M3:S`];
+    const ranges = [`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A:H`];
+    if (this.env.NATIVE_TABLE !== '1') ranges.push(`${quoteSheet(this.env.SHEET_NAME_INCOME)}!M3:S`);
     if (needsDict) ranges.push(`${quoteSheet(this.env.SHEET_NAME_DICT)}!A3:B`);
     const query = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
     ranges.forEach(range => query.append('ranges', range));
