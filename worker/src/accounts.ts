@@ -19,8 +19,8 @@ export class AccountsService {
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private storage: OperationStorage, private env: Env, private now = () => Date.now()) {}
   private async state(): Promise<State> {
-    const saved = await this.storage.get<State>('accounts-v1'); if (saved) return saved;
-    const state: State = { accounts: [], sessions: [], failures: {}, rates: {}, dummy: await hashPassword(randomSecret()) };
+    const saved = await this.storage.get<State>('accounts-v1'); if (saved && (saved.accounts.length || !this.env.APP_KEY)) return saved;
+    const state: State = saved || { accounts: [], sessions: [], failures: {}, rates: {}, dummy: await hashPassword(randomSecret()) };
     if (this.env.APP_KEY) state.accounts.push({ id: 'tarlan', login: 'tarlan', displayName: 'Tarlan', sheetId: this.env.USE_MOCK === '1' ? 'mock-tarlan-table-0000000000' : this.env.SHEET_ID || '', queueKey: randomSecret(), mustChangePassword: false, disabled: false, createdAt: this.now(), passwordChangedAt: this.now(), ...await hashPassword(this.env.APP_KEY) });
     await this.storage.put('accounts-v1', state); return state;
   }
@@ -28,6 +28,11 @@ export class AccountsService {
   private blocked(s: State, keys: string[]) { const until = Math.max(0, ...keys.map(k => s.failures[k]?.until || 0)); if (until > this.now()) throw new Limited(Math.ceil((until - this.now()) / 1000)); }
   private fail(s: State, keys: string[]) { for (const key of keys) { const f = s.failures[key] || { count: 0, level: 0, until: 0, touched: this.now() }; f.touched = this.now(); if (++f.count >= 5) { f.until = this.now() + Math.min(86400000, 900000 * 2 ** f.level); f.level++; f.count = 0; } s.failures[key] = f; } this.blocked(s, keys); }
   async fetch(request: Request): Promise<Response> {
+    // Buffer the bounded incoming stream before queued work/early responses. A DO must not
+    // leave a caller-owned stream unread after replying (e.g. logout or rate limiting).
+    if (request.body) {
+      try { const reader = request.body.getReader(), chunks: Uint8Array[] = []; let length = 0; for (;;) { const { done, value } = await reader.read(); if (done) break; length += value.length; if (length > 16384) { await reader.cancel(); throw new AppError(413, 'body', 'Слишком большой запрос'); } chunks.push(value); } const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } request = new Request(request, { body: bytes }); } catch (e) { return errorResponse(e); }
+    }
     const task = this.tail.then(async () => {
       const origin = request.headers.get('Origin'); if (origin && origin !== new URL(request.url).origin) return errorResponse(new AppError(403, 'origin', 'Запрос с другого сайта запрещён'));
       const s = await this.state();
@@ -55,11 +60,12 @@ export class AccountsService {
     const path = new URL(request.url).pathname, method = request.method, ip = request.headers.get('CF-Connecting-IP') || 'local';
     if (path.startsWith('/api/admin/')) return this.admin(request, s, ip);
     if (path === '/api/health' && method === 'GET') return json({ ok: true });
-    if (path === '/api/accounts' && method === 'GET') { this.rate(s, `list:${ip}`, 60); return json(s.accounts.filter(a => !a.disabled).map(a => ({ login: a.login, displayName: a.displayName }))); }
+    if (path === '/api/accounts' && method === 'GET') { this.rate(s, 'list-global', 600); this.rate(s, `list:${ip}`, 60); return json(s.accounts.filter(a => !a.disabled).map(a => ({ login: a.login, displayName: a.displayName }))); }
     if (path === '/api/login' && method === 'POST') {
-      this.rate(s, `login-ip:${ip}`, 30); this.rate(s, 'login-global', 200);
+      this.rate(s, 'login-global', 200); this.rate(s, `login-ip:${ip}`, 30);
       const b = await body(request), login = typeof b.login === 'string' ? b.login.toLowerCase().slice(0, 32) : '', password = typeof b.password === 'string' && b.password.length <= 256 ? b.password : '';
       const keys = [`login:${login}`, `pair:${ip}:${login}`]; this.blocked(s, keys);
+      if (Object.keys(s.failures).length >= 5000 && keys.some(k => !s.failures[k])) throw new Limited(900);
       const a = s.accounts.find(a => a.login === login);
       const valid = await verifyPassword(password, a || s.dummy);
       if (!a || !valid || a.disabled) { this.fail(s, keys); throw new AppError(401, 'credentials', 'Неверный логин или пароль'); }
@@ -93,7 +99,7 @@ export class AccountsService {
   }
   private async admin(request: Request, s: State, ip: string) {
     if (!this.env.ADMIN_TOKEN) throw new AppError(404, 'not_found', 'Маршрут не найден');
-    this.rate(s, `admin:${ip}`, 20); this.rate(s, 'admin-global', 100);
+    this.rate(s, 'admin-global', 100); this.rate(s, `admin:${ip}`, 20);
     if (!await constantEqual(request.headers.get('Authorization') || '', `Bearer ${this.env.ADMIN_TOKEN}`)) throw new AppError(401, 'unauthorized', 'Нет доступа');
     const action = new URL(request.url).pathname.slice('/api/admin/'.length);
     if (action === 'list' && request.method === 'GET') return json(s.accounts.map(a => ({ login: a.login, displayName: a.displayName, hasSheet: !!a.sheetId, mustChangePassword: a.mustChangePassword, disabled: a.disabled, sessions: s.sessions.filter(x => x.accountId === a.id).length, passwordChangedAt: a.passwordChangedAt })));
