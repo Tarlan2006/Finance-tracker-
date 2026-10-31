@@ -9,6 +9,7 @@ interface Receipt { previewHash?: string; signature: string; chunks: number; don
 export class ConfigApi {
   private cache?: { until: number; value: Config };
   constructor(private adapter: SheetsAdapter, private operations: OperationStorage = new MemoryOperations()) {}
+  cachedConfigured() { return this.cache && this.cache.until > Date.now() ? this.cache.value.configured : undefined; }
   async read(fresh = false, loadLegacy: () => Promise<Snapshot> = () => this.adapter.read()): Promise<Config> {
     if (!fresh && this.cache && this.cache.until > Date.now()) return this.cache.value;
     const value = decodeConfig(await this.adapter.readConfigTables());

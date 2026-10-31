@@ -1,4 +1,5 @@
 import { AppError } from '../../shared/logic';
+import { retryAfterSeconds } from '../../shared/retry';
 interface ServiceAccount { client_email: string; private_key: string }
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 export class GoogleAuth {
@@ -29,13 +30,19 @@ export class GoogleAuth {
   }
 }
 export async function retryFetch(fetcher: typeof fetch, url: string, init: RequestInit, sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))) {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  const read = !init.method || init.method === 'GET';
+  for (let attempt = 0; ; attempt++) {
+    let wait = 3000 + Math.random() * 2000;
     try {
       const response = await fetcher(url, { ...init, signal: AbortSignal.timeout(15000) });
-      if (response.status !== 429 && response.status < 500 || attempt === 3) return response;
+      if (!read || attempt || response.status === 429 || response.status < 500) return response;
+      wait = Math.max(wait, retryAfterSeconds(response.headers.get('Retry-After')) * 1000);
+      // Long waits belong to the caller; never hold a Worker request for minutes.
+      if (wait > 10000) return response;
       await response.body?.cancel();
-    } catch (e) { if (attempt === 3) throw e; }
-    await sleep(200 * 2 ** attempt);
+    } catch (error) {
+      if (!read || attempt || error instanceof AppError) throw error;
+    }
+    await sleep(wait);
   }
-  throw new Error('Unreachable');
 }

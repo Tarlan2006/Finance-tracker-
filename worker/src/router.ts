@@ -1,5 +1,6 @@
 import { AppError, clean, csv, displayName, expensesFromRows, fingerprint, firstEmptyRow, parseAmount, suggestion, today, validMonth, validateExpense } from '../../shared/logic';
 import type { ExpenseInput, Snapshot } from '../../shared/types';
+import { SheetsCooldown } from './sheets-quota';
 import type { Env } from './env';
 import { isMock } from './env';
 import { Auth } from './auth';
@@ -11,7 +12,13 @@ import { MemoryOperations, type OperationStorage } from './config-store';
 import { checkExpenseHeaders } from './sheets';
 import type { TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
-export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
+export function errorResponse(error: unknown) {
+  if (error instanceof SheetsCooldown) {
+    const response = json({error:error.code, message:error.message}, error.status);
+    response.headers.set('Retry-After', String(error.seconds));
+    return response;
+  }
+  return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
 export class Api {
   private auth: Auth;
   private tail: Promise<unknown> = Promise.resolve();
@@ -24,10 +31,22 @@ export class Api {
     try {
       const origin = request.headers.get('Origin');
       if (origin && origin !== new URL(request.url).origin) throw new AppError(403, 'origin', 'Запрос с другого сайта запрещён');
-      if (!authenticated) await this.auth.check(request);
-      if (new URL(request.url).pathname === '/api/health' && request.method === 'GET') return json({ ok: true });
+      if (new URL(request.url).pathname === '/api/health' && request.method === 'GET') {
+        if (!authenticated) await this.auth.check(request);
+        return json({ ok: true });
+      }
       // Serializes read/check/write, including concurrent calls in the same DO.
-      const run = this.tail.then(() => this.route(request));
+      const run = this.tail.then(async () => {
+        if (!authenticated) await this.auth.check(request);
+        try { return await this.route(request); }
+        catch (error) {
+          if (error instanceof AppError && ['schema_mismatch','prepare_conflict','sheets'].includes(error.code)) this.adapter.invalidate?.(true);
+          throw error;
+        } finally {
+          this.adapter.finishRequest?.();
+          if (request.method !== 'GET') this.adapter.invalidate?.(new URL(request.url).pathname.startsWith('/api/table/'));
+        }
+      });
       this.tail = run.catch(() => undefined);
       return await run;
     } catch (e) { return errorResponse(e); }
@@ -69,6 +88,7 @@ export class Api {
     if ([4,6,7].some(i => s.rows[row - 1]?.[i] != null && s.rows[row - 1][i] !== '')) throw new AppError(409, 'partial_row', `Строка ${row} содержит комментарий или служебные значения. Проверьте таблицу вручную`);
     try { await this.adapter.write(row, e); }
     catch (error) {
+      if (error instanceof SheetsCooldown) throw error;
       const latest = await this.adapter.readRow(row);
       const committed = expensesFromRows([[], latest])[0];
       if (committed?.fp === fingerprint(e)) return { expense: { ...committed, row }, duplicate: false };
@@ -81,10 +101,12 @@ export class Api {
     const url = new URL(request.url), path = url.pathname, method = request.method;
     if (this.preparation) {
       if (path === '/api/table/prepare' && method === 'POST') { const result = await this.preparation.prepare(); this.env.NATIVE_TABLE = '1'; return json(result); }
-      const status = await this.preparation.status(); if (status.native) this.env.NATIVE_TABLE = '1';
+      const status = await this.preparation.status(method !== 'GET'); if (status.native) this.env.NATIVE_TABLE = '1';
       if (!status.ready) throw new AppError(409, 'table_uninitialized', 'Таблица подключена, но пуста');
     }
-    checkExpenseHeaders(await this.adapter.readHeaders());
+    const journal = ['/api/bootstrap','/api/expenses','/api/export.csv','/api/quick'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
+    if (journal) await this.adapter.primeJournal?.(method === 'GET', this.config.cachedConfigured());
+    checkExpenseHeaders(await this.adapter.readHeaders(method === 'GET'));
     if (path === '/api/config' && method === 'GET') return json(await this.config.read());
     if (path === '/api/config/setup' && method === 'POST') { if (url.searchParams.has('dry')) throw new AppError(422, 'dry', 'Предпросмотр доступен только для категорий'); return json(await this.config.setup()); }
     if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));
@@ -121,6 +143,7 @@ export class Api {
         if (current.id) await this.operations.put('deleted-expense:' + current.id, true);
         try { await this.adapter.clear(row); }
         catch (error) {
+          if (error instanceof SheetsCooldown) throw error;
           const latest = await this.adapter.readRow(row);
           if ([0,1,2,3,4,6,7].some(i => latest[i] != null && latest[i] !== '')) {
             if (expensesFromRows([[], latest])[0]?.fp !== fp) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал.');
@@ -133,7 +156,7 @@ export class Api {
       if (current.category && (!('category' in b) || b.category === current.category) && (await this.config.read()).categories.some(c => c.archived && `${c.emoji} ${c.name}`.trim() === current.category)) allowed.push({ name: current.category, limit: 0 });
       const changed = validateExpense({ ...current, ...b, id: current.id || `${Date.now()}-${crypto.randomUUID()}` }, allowed, this.env.TZ);
       let writeError: unknown;
-      try { await this.adapter.write(row, changed, current); } catch (error) { writeError = error; }
+      try { await this.adapter.write(row, changed, current); } catch (error) { if (error instanceof SheetsCooldown) throw error; writeError = error; }
       const saved = expensesFromRows([[], await this.adapter.readRow(row)])[0];
       if (writeError && saved?.fp === current.fp) throw writeError;
       if (!saved || fingerprint(saved) !== fingerprint(changed)) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал');

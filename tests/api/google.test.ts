@@ -24,7 +24,18 @@ describe('Google auth and transport', () => {
     await Promise.all([auth.token(), auth.token()]); expect(fetcher).toHaveBeenCalledTimes(1);
     now += 3600000; await auth.token(); expect(fetcher).toHaveBeenCalledTimes(2);
   });
-  it('429/5xx максимум четыре попытки с backoff', async () => { const waits: number[] = []; const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('', { status: 429 })).mockResolvedValueOnce(new Response('', { status: 503 })).mockResolvedValueOnce(new Response('', { status: 502 })).mockResolvedValue(new Response('{}')); expect((await retryFetch(fetcher, 'https://example.invalid', {}, async n => { waits.push(n); })).ok).toBe(true); expect(fetcher).toHaveBeenCalledTimes(4); expect(waits).toEqual([200, 400, 800]); });
+  it('returns 429 immediately and retries a failed read only once', async () => {
+    const waits: number[] = [];
+    const sleep = async (ms: number) => { waits.push(ms); };
+    const limited = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, {status:429}));
+    expect((await retryFetch(limited, 'https://example.invalid', {}, sleep)).status).toBe(429);
+    expect(limited).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([]);
+    const fail = vi.fn<typeof fetch>(() => Promise.resolve(new Response(null, {status:503, headers:{'Retry-After':'6'}})));
+    expect((await retryFetch(fail, 'https://example.invalid', {}, sleep)).status).toBe(503);
+    expect(fail).toHaveBeenCalledTimes(2);
+    expect(waits).toEqual([6000]);
+  });
   it('ошибку 400 не повторяет', async () => { const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 400 })); expect((await retryFetch(fetcher, 'https://example.invalid', {})).status).toBe(400); expect(fetcher).toHaveBeenCalledTimes(1); });
   it('пакетное чтение, категории кэшированы; записи только A:E/G:H RAW', async () => {
     const calls: { url: string; body?: Record<string, unknown> }[] = [];

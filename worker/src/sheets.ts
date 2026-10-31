@@ -10,7 +10,10 @@ export function checkExpenseHeaders(row: Row | undefined) {
 export const expenseColumns = ['date','name','category','amount','comment',null,'id','source'] as const;
 export interface SheetsAdapter extends ConfigStorage {
   read(legacy?: boolean): Promise<Snapshot>;
-  readHeaders(): Promise<Row>;
+  primeJournal?(readOnly: boolean, configured?: boolean): Promise<void>;
+  invalidate?(structure?: boolean): void;
+  finishRequest?(): void;
+  readHeaders(cached?: boolean): Promise<Row>;
   readRow(row: number): Promise<Row>;
   write(row: number, expense: ExpenseInput, previous?: ExpenseInput): Promise<void>;
   clear(row: number): Promise<void>;

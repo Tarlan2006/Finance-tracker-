@@ -2,6 +2,7 @@ import { AppError } from '../../shared/logic';
 import type { Row } from '../../shared/types';
 import { CATEGORY_SHEET, ITEM_SHEET, headers, type OperationStorage } from './config-store';
 import type { Env } from './env';
+import type { GoogleSheetsAdapter } from './google-sheets';
 import { GoogleAuth, retryFetch } from './google-auth';
 import type { MockSheetsAdapter } from './mock-sheets';
 import { EXPENSE_HEADERS } from './sheets';
@@ -10,12 +11,12 @@ export const MONTH_FORMULA = '=ARRAYFORMULA(IF(A2:A1006="","",TEXT(A2:A1006,"yyy
 export const STARTER_CATEGORIES = [['🥦', 'Продукты'], ['☕', 'Кафе и рестораны'], ['🚗', 'Транспорт'], ['💊', 'Здоровье'], ['🛍️', 'Покупки и одежда'], ['🎬', 'Развлечения'], ['🎁', 'Подарки'], ['📦', 'Прочее']];
 interface Sheet { id: number; title: string }
 interface Plan { sheets: Sheet[]; categories: Row[]; done: boolean }
-export interface PreparationBackend { sheets(): Promise<Sheet[]>; create(plan: Plan, missing: Sheet[]): Promise<void>; valid(plan: Plan): Promise<boolean> }
+export interface PreparationBackend { sheets(fresh?: boolean): Promise<Sheet[]>; create(plan: Plan, missing: Sheet[]): Promise<void>; valid(plan: Plan): Promise<boolean> }
 export class TablePreparation {
   constructor(private backend: PreparationBackend, private storage: OperationStorage, private expenseName: string) {}
-  async status() {
+  async status(mutation = false) {
     const plan = await this.storage.get<Plan>('table-preparation');
-    const sheets = await this.backend.sheets();
+    const sheets = await this.backend.sheets(mutation && !!plan?.done);
     if (plan?.done) {
       if (!plan.sheets.every(p => sheets.some(s => s.id === p.id && s.title === p.title))) throw new AppError(409, 'prepare_conflict', 'Подключённый лист заменён или переименован. Проверьте таблицу.');
       return { ready: true, native: true };
@@ -23,7 +24,7 @@ export class TablePreparation {
     return { ready: !plan && sheets.some(s => s.title === this.expenseName), native: !!plan };
   }
   async prepare() {
-    const sheets = await this.backend.sheets(), names = [this.expenseName, CATEGORY_SHEET, ITEM_SHEET];
+    const sheets = await this.backend.sheets(true), names = [this.expenseName, CATEGORY_SHEET, ITEM_SHEET];
     let plan = await this.storage.get<Plan>('table-preparation');
     if (!plan) {
       if (sheets.some(s => names.includes(s.title))) throw new AppError(409, 'already_initialized', 'В таблице уже есть лист расходов или служебные листы. Подготовка ничего не изменила');
@@ -45,9 +46,11 @@ export class TablePreparation {
 }
 export class GooglePreparation implements PreparationBackend {
   private auth: GoogleAuth;
-  constructor(private env: Env, private fetcher: typeof fetch = fetch) { this.auth = new GoogleAuth(env.GOOGLE_SERVICE_ACCOUNT_JSON || '', fetcher); }
+  constructor(private env: Env, private fetcher: typeof fetch = fetch, private catalog?: GoogleSheetsAdapter) { this.auth = new GoogleAuth(env.GOOGLE_SERVICE_ACCOUNT_JSON || '', fetcher); }
   private async request(suffix: string, init: RequestInit = {}) { const r = await retryFetch(this.fetcher, `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.env.SHEET_ID || '')}${suffix}`, { ...init, headers: { Authorization: `Bearer ${await this.auth.token()}`, 'Content-Type': 'application/json' } }); if (!r.ok) throw new AppError(503, 'sheets', 'Не удалось подготовить таблицу. Проверьте доступ и повторите'); return r.json(); }
-  async sheets(): Promise<Sheet[]> { const b = await this.request('?fields=sheets.properties(sheetId,title)'); return (b.sheets || []).map((s: { properties: { sheetId: number; title: string } }) => ({ id: s.properties.sheetId, title: s.properties.title })); }
+  async sheets(fresh = false): Promise<Sheet[]> {
+    if (this.catalog) return (await this.catalog.metadata(fresh)).map(s => ({id:s.properties.sheetId,title:s.properties.title}));
+    const b = await this.request('?fields=sheets.properties(sheetId,title)'); return (b.sheets || []).map((s: { properties: { sheetId: number; title: string } }) => ({ id: s.properties.sheetId, title: s.properties.title })); }
   async create(plan: Plan, missing: Sheet[]) {
     const requests: unknown[] = [];
     for (const sheet of missing) {
@@ -62,7 +65,7 @@ export class GooglePreparation implements PreparationBackend {
     // Google applies this batch atomically. A lost response is recovered by owned sheet IDs.
     await this.request(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) });
   }
-  async valid(plan: Plan) { const sheets = await this.sheets(); if (!plan.sheets.every(p => sheets.some(s => s.id === p.id && s.title === p.title))) return false; const query = new URLSearchParams(); plan.sheets.forEach(s => query.append('ranges', `'${s.title.replace(/'/g, "''")}'!A1:H1`)); const b = await this.request(`/values:batchGet?${query}`); return plan.sheets.every((s, i) => JSON.stringify(b.valueRanges?.[i]?.values?.[0]) === JSON.stringify(s.title === this.env.SHEET_NAME_EXPENSES ? EXPENSE_HEADERS : headers[s.title as typeof CATEGORY_SHEET | typeof ITEM_SHEET])); }
+  async valid(plan: Plan) { const sheets = await this.sheets(true); if (!plan.sheets.every(p => sheets.some(s => s.id === p.id && s.title === p.title))) return false; const query = new URLSearchParams(); plan.sheets.forEach(s => query.append('ranges', `'${s.title.replace(/'/g, "''")}'!A1:H1`)); const b = await this.request(`/values:batchGet?${query}`); return plan.sheets.every((s, i) => JSON.stringify(b.valueRanges?.[i]?.values?.[0]) === JSON.stringify(s.title === this.env.SHEET_NAME_EXPENSES ? EXPENSE_HEADERS : headers[s.title as typeof CATEGORY_SHEET | typeof ITEM_SHEET])); }
 }
 export class MockPreparation implements PreparationBackend {
   metadata: Sheet[];
