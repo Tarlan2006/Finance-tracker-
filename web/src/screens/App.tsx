@@ -13,6 +13,7 @@ import Add, { type Draft } from './Add';
 import Expenses from './Expenses';
 import Overview from './Overview';
 import More from './More';
+import Logo from './Logo';
 import Icon, { type IconName } from './Icon';
 const currencyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const tabs: { name: string; icon: IconName }[] = [{ name: 'Траты', icon: 'expenses' }, { name: 'Обзор', icon: 'overview' }, { name: 'Ещё', icon: 'more' }];
@@ -54,11 +55,11 @@ export default function App() {
   });
   const logout = async () => { if (await finance.logout()) setLogoutPrompt(false); };
   const requestLogout = () => queue.length ? setLogoutPrompt(true) : void logout();
-  if (!key) return <main className="login"><h1>Finance Tracker</h1><p>Быстрые записи. Понятный бюджет.<br/>Ваша привычная Google-таблица.</p><form onSubmit={e => { e.preventDefault(); void finance.login(); }}><label htmlFor="access-key">Код доступа</label><input id="access-key" type="password" autoComplete="current-password" value={finance.keyInput} onChange={e => finance.setKeyInput(e.target.value)} placeholder="Введите ваш код" required/>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={finance.loading}>{finance.loading ? 'Подключаем…' : 'Войти'}</button></form><small>Finance Tracker · личный бюджет</small></main>;
+  if (!key) return <main className="login"><Logo className="login-logo"/><h1>Finance Tracker</h1><p>Быстрые записи. Понятный бюджет.<br/>Ваша привычная Google-таблица.</p><form onSubmit={e => { e.preventDefault(); void finance.login(); }}><label htmlFor="access-key">Код доступа</label><input id="access-key" type="password" autoComplete="current-password" value={finance.keyInput} onChange={e => finance.setKeyInput(e.target.value)} placeholder="Введите ваш код" required/>{error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={finance.loading}>{finance.loading ? 'Подключаем…' : 'Войти'}</button></form><small>Finance Tracker · личный бюджет</small></main>;
   const allCategories = data?.config?.configured ? configCategories(data.config.categories) : data?.categories || [];
   const modal = addOpen || logoutPrompt || !!duplicate;
   return <div className="app-shell"><div className="app-content" inert={modal}>
-    <header className={`app-header material ${compact ? 'compact' : ''}`}><span className="brand">Finance Tracker</span><strong className="compact-title">{tabs[tab].name}</strong><span className={`connection ${online ? '' : 'offline'}`}><i/>{online ? data?.mock ? 'Демо' : 'На связи' : 'Офлайн'}{queue.length ? ` · ${queue.length}` : ''}</span></header>
+    <header className={`app-header material ${compact ? 'compact' : ''}`}><span className="brand"><Logo/>Finance Tracker</span><strong className="compact-title">{tabs[tab].name}</strong><span className={`connection ${online ? '' : 'offline'}`}><i/>{online ? data?.mock ? 'Демо' : 'На связи' : 'Офлайн'}{queue.length ? ` · ${queue.length}` : ''}</span></header>
     {error && <div className="error-banner" role="alert">{error}<div><button onClick={() => void finance.reload()}>Обновить</button><button onClick={requestLogout}>Выйти</button></div></div>}
     <main className="main-content">{!data ? <div className="loading-state" aria-busy="true"><div className="skeleton"/><h1>Подключаем таблицу…</h1><p>Для первого входа нужен интернет.</p></div> : <>
       {tab === 0 && <Expenses data={data} openSettings={() => { setSettingsOpen(true); navigate(2); }} expenses={data.history} categories={allCategories} queue={queue} money={money} edit={finance.edit} remove={finance.remove} retry={finance.retry} editQueue={finance.editQueue} removeQueue={finance.removeQueue} month={month} setMonth={m => { setMonth(m); setFilter(null); }} range={filter} clearRange={() => setFilter(null)} currentDay={today(data.tz)}/>}
