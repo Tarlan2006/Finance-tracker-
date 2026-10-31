@@ -12,13 +12,14 @@ export function counter(initial: number, frames: Frames, render: (value: number)
     stop,
     to(target: number, duration: number) {
       stop(); const token = generation, from = value, start = frames.now();
+      if (from === target) duration = 0;
       const tick = (time: number) => {
         if (token !== generation) return;
         const p = duration <= 0 ? 1 : Math.min(1, (time - start) / duration);
         value = interpolate(from, target, p); render(value);
         if (p < 1) frame = frames.request(tick);
       };
-      if (duration <= 0) tick(start); else frame = frames.request(tick);
+      tick(start);
     }
   };
 }
