@@ -18,7 +18,24 @@ describe('API', () => {
   it('старую строку без G можно править: ID назначается безопасно', async () => { mock.rows[1][6] = ''; const b = await (await request('bootstrap')).json(); const old = b.history[0]; const result = await request(`expenses/${old.row}`, 'PATCH', { fp: old.fp, name: 'Правка старой траты' }); expect(result.status).toBe(200); expect((await result.json()).expense.id).toMatch(/^\d{13}-/); });
   it('пустая A:D с оставшимся ID не перезаписывается', async () => { mock.rows[61][6] = 'orphan'; expect((await request('expenses', 'POST', input())).status).toBe(409); expect(mock.writes).toHaveLength(0); });
   it.each([{ amount: 0 }, { amount: 1.001 }, { amount: '1200' }, { category: 'неизвестная' }, { category: '' }, { date: '2099-01-01' }])('422 %j', async patch => expect((await request('expenses', 'POST', { ...input(), ...patch })).status).toBe(422));
-  it('заголовки только проверяются', async () => { mock.rows[0][6] = ''; expect((await request('bootstrap')).status).toBe(422); expect(mock.writes).toHaveLength(0); });
+  it.each(['legacy', 'native'])('checks A:H before reading or changing journal cells (%s)', async mode => {
+    api = new Api({ ...testEnv, NATIVE_TABLE: mode === 'native' ? '1' : undefined }, mock);
+    expect((await request('bootstrap')).status).toBe(200);
+    const headers = [...mock.rows[0]];
+    const swapped = [...headers];
+    [swapped[1], swapped[4]] = [swapped[4], swapped[1]];
+    mock.read = async () => { throw new Error('Journal values accessed before schema check'); };
+    for (const invalid of [swapped, headers.slice(0, 7), ['', ...headers.slice(1)]]) {
+      mock.rows[0] = invalid;
+      for (const [path, method] of [['bootstrap','GET'], ['expenses','POST'], ['quick','POST'], ['expenses/2','PATCH'], ['expenses/2','DELETE'], ['config/categories/test','POST']]) {
+        const response = await request(path, method);
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ error: 'schema_mismatch', message: expect.stringContaining('A:H') });
+      }
+    }
+    expect(mock.writes).toHaveLength(0);
+    expect(mock.configWrites).toHaveLength(0);
+  });
   it('правка/удаление с отпечатком, конфликт не пишет', async () => { const { expense: e } = await (await request('expenses', 'POST', input())).json(); expect((await request(`expenses/${e.row}`, 'PATCH', { fp: 'stale', amount: 2000 })).status).toBe(409); const updated = await (await request(`expenses/${e.row}`, 'PATCH', { fp: e.fp, amount: 2000 })).json(); expect(updated.expense.amount).toBe(2000); expect((await request(`expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, 'DELETE')).status).toBe(409); const f = mock.rows.map(r => r[5]); expect((await request(`expenses/${e.row}?fp=${encodeURIComponent(updated.expense.fp)}`, 'DELETE')).status).toBe(200); expect(mock.rows).toHaveLength(1006); expect(mock.rows.map(r => r[5])).toEqual(f); expect((await (await request('expenses', 'POST', input())).json()).expense.row).toBe(e.row); });
   it('quick: неопределённая категория требует проверки, retry безопасен', async () => { const b = { id: input().id, amount: 900, merchant: 'Новый магазин', src: 'kaspi', save: true }; const r = await (await request('quick', 'POST', b)).json(); expect(r.expense.category).toBe(''); expect(r.expense.source).toBe('kaspi-auto'); expect((await (await request('quick', 'POST', b)).json()).duplicate).toBe(true); });
   it('csv UTF-8 BOM', async () => { const r = await request('export.csv'); expect(r.headers.get('Content-Type')).toContain('text/csv'); const bytes = new Uint8Array(await r.arrayBuffer()); expect([...bytes.slice(0, 3)]).toEqual([239, 187, 191]); });

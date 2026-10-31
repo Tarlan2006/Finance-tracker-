@@ -8,7 +8,7 @@ import { securityHeaders } from './headers';
 import { ConfigApi } from './config-api';
 import { configCategories } from '../../shared/config';
 import { MemoryOperations, type OperationStorage } from './config-store';
-import { EXPENSE_HEADERS } from './sheets';
+import { checkExpenseHeaders } from './sheets';
 import type { TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
@@ -40,8 +40,7 @@ export class Api {
     });
     const s = imported ?? await this.adapter.read(!config.configured);
     if (config.configured) s.categories = configCategories(config.categories).filter(c => !c.archived);
-    if (this.env.NATIVE_TABLE === '1' && EXPENSE_HEADERS.some((h, i) => s.rows[0]?.[i] !== h)) throw new AppError(409, 'schema', 'Заголовки журнала изменились. Проверьте порядок столбцов.');
-    if (s.rows[0]?.[6] !== 'ID' || s.rows[0]?.[7] !== 'Источник') throw new AppError(422, 'headers', 'Добавь столбцы G и H: G1 = ID, H1 = Источник');
+    checkExpenseHeaders(s.rows[0]);
     return s;
   }
   private async body(request: Request): Promise<Record<string, unknown>> {
@@ -85,6 +84,7 @@ export class Api {
       const status = await this.preparation.status(); if (status.native) this.env.NATIVE_TABLE = '1';
       if (!status.ready) throw new AppError(409, 'table_uninitialized', 'Таблица подключена, но пуста');
     }
+    checkExpenseHeaders(await this.adapter.readHeaders());
     if (path === '/api/config' && method === 'GET') return json(await this.config.read());
     if (path === '/api/config/setup' && method === 'POST') { if (url.searchParams.has('dry')) throw new AppError(422, 'dry', 'Предпросмотр доступен только для категорий'); return json(await this.config.setup()); }
     if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));

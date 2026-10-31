@@ -1,5 +1,5 @@
 import { digest } from './passwords';
-import { EXPENSE_HEADERS } from './sheets';
+import { checkExpenseHeaders } from './sheets';
 import { AppError } from '../../shared/logic';
 import type { Config, ConfigCategory, ConfigItem, Row } from '../../shared/types';
 export const CATEGORY_SHEET = 'FT Categories', ITEM_SHEET = 'FT Items';
@@ -41,7 +41,7 @@ export async function verifyPlan(plan: ConfigPlan, tables: ConfigTables, journal
     const now = (w.sheet === CATEGORY_SHEET ? tables.categories : tables.items)?.[w.row - 1] || [];
     if (!sameRow(now, w.before) && !sameRow(now, w.after)) throw configConflict();
   }
-  if (plan.moves.length && EXPENSE_HEADERS.some((header, i) => journal[0]?.[i] !== header)) throw configConflict();
+  if (plan.moves.length) checkExpenseHeaders(journal[0]);
   await Promise.all(plan.moves.map(async move => {
     if (!Number.isInteger(move.row) || move.row < 2 || move.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала');
     const row = journal[move.row - 1] || [];

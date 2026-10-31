@@ -36,7 +36,7 @@ export function useFinance() {
     if (!key || !owner || session.current !== key) return;
     const request = ++sequence.current;
     try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
-    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await setQueueKey(''); storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(cacheKey(owner)); closeSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
+    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await setQueueKey(''); storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(cacheKey(owner)); closeSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
   }, [key, owner, showError, closeSession, cacheKey]);
   const sync = useCallback(async () => {
     if (!owner || session.current !== key) return;

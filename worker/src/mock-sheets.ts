@@ -37,6 +37,7 @@ export class MockSheetsAdapter implements SheetsAdapter {
     });
     return { rows, categories: this.native ? [] : structuredClone(mockCategories), summaries: this.native ? [] : summaries };
   }
+  async readHeaders() { return [...this.rows[0]]; }
   async readRow(row: number) {
     this.assertRow(row);
     const values = [...(this.rows[row - 1] || [])];
