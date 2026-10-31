@@ -14,6 +14,6 @@ export default function NameInput({ value, onChange, history }: { value: string;
       if (event.key === 'Enter' && open && active >= 0 && choices[active]) { event.preventDefault(); choose(choices[active]); }
       if (event.key === 'Tab') setOpen(false);
     }}/></div>
-    {open && choices.length > 0 && <ul id="name-options" className="name-options" role="listbox" aria-label="Подсказки названия">{choices.map((name, i) => <li key={name} id={`name-option-${i}`} role="option" aria-selected={active === i} onPointerDown={event => event.preventDefault()} onClick={() => choose(name)}>{name}</li>)}</ul>}
+    {open && choices.length > 0 && <ul id="name-options" className="name-options" role="listbox" aria-label="Подсказки названия">{choices.map((name, i) => <li key={name} id={`name-option-${i}`} role="option" style={{ '--item-index': i } as React.CSSProperties} aria-selected={active === i} onPointerDown={event => event.preventDefault()} onClick={() => choose(name)}>{name}</li>)}</ul>}
   </div>;
 }
