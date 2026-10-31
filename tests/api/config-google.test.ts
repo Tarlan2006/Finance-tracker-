@@ -39,7 +39,7 @@ it('Google settings setup and rename issue only whitelisted requests and preserv
   const writeCount = f.writes.length; await f.api.setup(); expect(f.writes).toHaveLength(writeCount);
   const cat = c.categories[0], body = { operationId: crypto.randomUUID(), rev: 1, name: 'Новое название', emoji: '🍎' };
   const preview = await f.api.mutate(`/api/config/categories/${cat.id}`, body, true); expect(preview.count).toBeGreaterThan(0); expect(f.writes).toHaveLength(writeCount);
-  await f.api.mutate(`/api/config/categories/${cat.id}`, body, false);
+  await f.api.mutate(`/api/config/categories/${cat.id}`, {...body, previewHash: preview.previewHash}, false);
   expect(f.writes.slice(writeCount).filter(r => r.startsWith("'Ввод данных'"))).toHaveLength(preview.count);
   expect(f.mock.rows.map(r => r.filter((_, i) => i !== 2))).toEqual(before.map(r => r.filter((_, i) => i !== 2)));
   expect(f.mock.rows).toHaveLength(1006); expect(f.reads).toContain("'Ввод данных'!A1:H1006");
@@ -55,6 +55,8 @@ it('rejects a replacement expense with the same category', async () => {
     return apply(plan);
   };
   const count = f.writes.length;
-  await expect(f.api.mutate('/api/config/categories/'+c.id, {operationId:crypto.randomUUID(), rev:c.rev, name:'Новое'}, false)).rejects.toThrow('Настройки изменились');
+  const path = '/api/config/categories/'+c.id, body = {operationId:crypto.randomUUID(), rev:c.rev, name:'Новое'};
+  const preview = await f.api.mutate(path, body, true);
+  await expect(f.api.mutate(path, {...body, previewHash:preview.previewHash}, false)).rejects.toThrow('Настройки изменились');
   expect(f.writes).toHaveLength(count);
 });

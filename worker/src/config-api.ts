@@ -5,7 +5,7 @@ import type { Config, ConfigCategory, ConfigItem, Snapshot } from '../../shared/
 import type { SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, MemoryOperations, moveIdentity, categoryRow, configConflict, decodeConfig, headers, itemRow, planRows, type ConfigPlan, type OperationStorage } from './config-store';
 const stamp = () => `${today('Asia/Almaty')}T${new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date())}+05:00`;
-interface Receipt { signature: string; chunks: number; done: boolean; count: number }
+interface Receipt { previewHash?: string; signature: string; chunks: number; done: boolean; count: number }
 export class ConfigApi {
   private cache?: { until: number; value: Config };
   constructor(private adapter: SheetsAdapter, private operations: OperationStorage = new MemoryOperations()) {}
@@ -37,6 +37,7 @@ export class ConfigApi {
     this.cache = undefined;
     if (saved) {
       if (saved.signature !== signature) throw configConflict();
+      if ((saved.previewHash && b.previewHash !== saved.previewHash) || (!saved.done && saved.count > 0 && !saved.previewHash)) throw configConflict();
       if (!saved.done) { const plan: ConfigPlan = { writes: [], moves: [] }; for (let i = 0; i < saved.chunks; i++) { const chunk = await this.operations.get<ConfigPlan>(`${key}:${i}`); if (!chunk) throw new AppError(503, 'operation', 'Повторите операцию позже'); plan.writes.push(...chunk.writes); plan.moves.push(...chunk.moves); } await this.adapter.applyConfig(plan); await this.operations.put(key, { ...saved, done: true }); }
       return { config: await this.read(true), count: saved.count };
     }
@@ -69,8 +70,8 @@ export class ConfigApi {
           row, from, to: target, identity: await moveIdentity(cells)
         })));
         previewCount = moves.length;
-        previewHash = await digest(JSON.stringify([old.id, old.rev, target, moves]));
-        if (!dry && b.previewHash !== undefined && b.previewHash !== previewHash) throw configConflict();
+        previewHash = await digest(JSON.stringify([operationId, signature, old.id, old.rev, target, moves]));
+        if (!dry && (target !== categoryLabel(old) || b.previewHash !== undefined) && b.previewHash !== previewHash) throw configConflict();
         if (target !== categoryLabel(old)) plan.moves = moves;
       }
       if ('move' in b) {
@@ -99,7 +100,7 @@ export class ConfigApi {
     // Persist bounded chunks so a full-journal rename can resume safely.
     const chunks = Math.max(1, Math.ceil(Math.max(plan.writes.length, plan.moves.length) / 50));
     for (let i = 0; i < chunks; i++) await this.operations.put(`${key}:${i}`, { writes: plan.writes.slice(i * 50, (i + 1) * 50), moves: plan.moves.slice(i * 50, (i + 1) * 50) });
-    const receipt: Receipt = { signature, chunks, done: false, count: plan.moves.length };
+    const receipt: Receipt = { ...(previewHash ? { previewHash } : {}), signature, chunks, done: false, count: plan.moves.length };
     await this.operations.put(key, receipt);
     try { await this.adapter.applyConfig(plan); await this.operations.put(key, { ...receipt, done: true }); } finally { this.cache = undefined; }
     return { config: await this.read(true), count: plan.moves.length };

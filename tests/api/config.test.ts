@@ -10,6 +10,11 @@ let api: Api, mock: MockSheetsAdapter, operations: MemoryOperations;
 beforeEach(() => { mock = new MockSheetsAdapter(); operations = new MemoryOperations(); api = new Api(env, mock, operations); });
 const req = (path: string, body?: unknown, key = 'config-test') => api.fetch(new Request(`https://app.test/api/${path}`, { method: body ? 'POST' : 'GET', headers: { 'X-App-Key': key, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }));
 const setup = async (): Promise<Config> => (await req('config/setup', {})).json();
+async function confirm(path: string, body: Record<string, unknown>) {
+  const response = await req(path + '?dry=1', body);
+  expect(response.status).toBe(200);
+  return { ...body, previewHash: (await response.json()).previewHash as string };
+}
 const op = () => crypto.randomUUID();
 it('compatibility reads cached config without writes; setup is authenticated, idempotent and imports', async () => {
   const read = vi.spyOn(mock, 'readConfigTables'); expect((await req('config', undefined, 'wrong')).status).toBe(401);
@@ -27,24 +32,25 @@ it('dry rename writes nothing; stale rev returns 409; C-only change preserves al
   const response = await req(`config/categories/${cat.id}`, {...body, previewHash:preview.previewHash}); expect(response.status).toBe(200);
   expect(mock.rows.map(r => r.filter((_, i) => i !== 2))).toEqual(before.map(r => r.filter((_, i) => i !== 2))); expect(mock.rows.filter(r => r[2] === '🍎 Питание')).toHaveLength(count);
   expect((await req(`config/categories/${cat.id}`, { ...body, operationId: op() })).status).toBe(409);
-  expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(mock.configWrites).toHaveLength(writes + 1);
+  expect((await req(`config/categories/${cat.id}`, {...body, previewHash:preview.previewHash})).status).toBe(200); expect(mock.configWrites).toHaveLength(writes + 1);
 });
 it('durable pending plan resumes after partial C update and process restart', async () => {
-  const c = await setup(), cat = c.categories[0], original = mock.applyConfig.bind(mock), body = { operationId: op(), rev: cat.rev, name: 'Новая еда' };
+  const c = await setup(), cat = c.categories[0], original = mock.applyConfig.bind(mock), body = await confirm('config/categories/'+cat.id, { operationId: op(), rev: cat.rev, name: 'Новая еда' });
   mock.applyConfig = async plan => { const first = plan.moves[0]; mock.rows[first.row - 1][2] = first.to; throw new Error('network'); };
   expect((await req(`config/categories/${cat.id}`, body)).status).toBe(503);
   mock.applyConfig = original; api = new Api(env, mock, operations);
+  expect((await req('config/categories/'+cat.id, {...body, previewHash: undefined})).status).toBe(409);
   expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(mock.rows.some(r => r[2] === categoryLabel(cat))).toBe(false);
   expect(mock.rows[1][5]).toContain('ARRAYFORMULA'); expect(mock.rows).toHaveLength(1006);
 });
-it('reread rejects external category changes without touching the foreign value', async () => { const c = await setup(), cat = c.categories[0], original = mock.applyConfig.bind(mock); mock.applyConfig = async p => { mock.rows[p.moves[0].row - 1][2] = 'Изменено вручную'; return original(p); }; expect((await req(`config/categories/${cat.id}`, { operationId: op(), rev: 1, name: 'Питание' })).status).toBe(409); expect(mock.tables.categories![1][2]).toBe(cat.name); expect(mock.rows[1][2]).toBe('Изменено вручную'); });
+it('reread rejects external category changes without touching the foreign value', async () => { const c = await setup(), cat = c.categories[0], original = mock.applyConfig.bind(mock); mock.applyConfig = async p => { mock.rows[p.moves[0].row - 1][2] = 'Изменено вручную'; return original(p); }; expect((await req(`config/categories/${cat.id}`, await confirm('config/categories/'+cat.id, { operationId: op(), rev: 1, name: 'Питание' }))).status).toBe(409); expect(mock.tables.categories![1][2]).toBe(cat.name); expect(mock.rows[1][2]).toBe('Изменено вручную'); });
 it('archive, restore and transfer retain journal amounts and exclude quick hints', async () => {
   let c = await setup(); const cat = c.categories[0], before = (await mock.read()).rows.map(r => r[3]);
   const r = await req(`config/categories/${cat.id}`, { operationId: op(), rev: 1, archived: true }); c = (await r.json()).config;
   const b = await (await req('bootstrap')).json(); expect(b.categories.some((x: { name: string }) => x.name === categoryLabel(cat))).toBe(false); expect(b.history.some((x: { category: string }) => x.category === categoryLabel(cat))).toBe(true);
   const quick = await (await req('quick', { merchant: 'Magnum', amount: 100 })).json(); expect(quick.suggestion.category).not.toBe(categoryLabel(cat));
   expect((await req(`config/categories/${cat.id}`, { operationId: op(), rev: c.categories[0].rev, archived: false })).status).toBe(200);
-  expect((await req(`config/categories/${cat.id}`, { operationId: op(), rev: 3, archived: true, targetId: c.categories[1].id })).status).toBe(200);
+  expect((await req(`config/categories/${cat.id}`, await confirm('config/categories/'+cat.id, { operationId: op(), rev: 3, archived: true, targetId: c.categories[1].id }))).status).toBe(200);
   expect(mock.rows.some(r => r[2] === categoryLabel(cat))).toBe(false); expect((await mock.read()).rows.map(r => r[3])).toEqual(before);
 });
 it('items: add, single-month change, removal and concurrent stale edit', async () => {
@@ -59,7 +65,7 @@ it('items: add, single-month change, removal and concurrent stale edit', async (
 it.each([{ kind: 'income', name: '=BAD', amount: 1 }, { kind: 'wrong', name: 'Статья', amount: 1 }, { kind: 'income', name: 'Статья', amount: 0 }, { kind: 'income', name: 'Статья', amount: 100000001 }, { kind: 'income', name: 'Статья', amount: 1.001 }])('validates item %j before writing', async b => { await setup(); const before = structuredClone(mock.tables); expect((await req('config/items', { operationId: op(), month: '2026-10', ...b })).status).toBe(422); expect(mock.tables).toEqual(before); });
 it('duplicate category, emoji and capacity errors never modify sheets', async () => { const c = await setup(), n = mock.configWrites.length; for (const b of [{ name: c.categories[0].name.toUpperCase() }, { name: 'Новая', emoji: 'xx' }, { name: 'Новая', limit: -1 }]) expect((await req('config/categories', { operationId: op(), ...b })).status).toBe(422); mock.tables.capacity[CATEGORY_SHEET] = 10; expect((await req('config/categories', { operationId: op(), name: 'Новая' })).status).toBe(422); expect(mock.configWrites).toHaveLength(n); });
 it('reorders exactly one position, increments affected revs and preserves category identity', async () => { const c = await setup(), cat = c.categories[0]; const result = await req(`config/categories/${cat.id}`, { operationId: op(), rev: 1, move: 1 }); const next: Config = (await result.json()).config; expect(next.categories.slice().sort((a, b) => a.sort - b.sort).slice(0, 3).map(c => c.id)).toEqual([c.categories[1].id, cat.id, c.categories[2].id]); expect(next.categories[0].rev).toBe(2); expect(next.categories[1].rev).toBe(2); });
-it('full 1005-row rename chunks durable values and safely retries a lost response', async () => { const c = await setup(), cat = c.categories[0]; for (let i = 1; i < mock.rows.length; i++) mock.rows[i][2] = categoryLabel(cat); const sizes: number[] = [], put = operations.put.bind(operations); operations.put = async (key, value) => { sizes.push(new TextEncoder().encode(JSON.stringify(value)).length); return put(key, value); }; const apply = mock.applyConfig.bind(mock); mock.applyConfig = async plan => { await apply(plan); throw new Error('lost response'); }; const body = { operationId: op(), rev: 1, name: 'Питание' }; expect((await req(`config/categories/${cat.id}`, body)).status).toBe(503); mock.applyConfig = apply; api = new Api(env, mock, operations); expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(Math.max(...sizes)).toBeLessThan(128 * 1024); expect(mock.rows.slice(1).every(r => r[2] === '🍔 Питание')).toBe(true); expect(mock.rows[1][5]).toContain('ARRAYFORMULA'); });
+it('full 1005-row rename chunks durable values and safely retries a lost response', async () => { const c = await setup(), cat = c.categories[0]; for (let i = 1; i < mock.rows.length; i++) mock.rows[i][2] = categoryLabel(cat); const sizes: number[] = [], put = operations.put.bind(operations); operations.put = async (key, value) => { sizes.push(new TextEncoder().encode(JSON.stringify(value)).length); return put(key, value); }; const apply = mock.applyConfig.bind(mock); mock.applyConfig = async plan => { await apply(plan); throw new Error('lost response'); }; const body = await confirm('config/categories/'+cat.id, { operationId: op(), rev: 1, name: 'Питание' }); expect((await req(`config/categories/${cat.id}`, body)).status).toBe(503); mock.applyConfig = apply; api = new Api(env, mock, operations); expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(Math.max(...sizes)).toBeLessThan(128 * 1024); expect(mock.rows.slice(1).every(r => r[2] === '🍔 Питание')).toBe(true); expect(mock.rows[1][5]).toContain('ARRAYFORMULA'); });
 it('rejects dry setup and mixed reorder/rename without any writes', async () => { expect((await req('config/setup?dry=1', {})).status).toBe(422); expect(mock.createdSheets).toEqual([]); const c = await setup(), before = structuredClone(mock.rows), n = mock.configWrites.length; expect((await req(`config/categories/${c.categories[0].id}`, { operationId: op(), rev: 1, move: 1, name: 'Новое имя' })).status).toBe(422); expect(mock.configWrites).toHaveLength(n); expect(mock.rows).toEqual(before); });
 
 it('refuses a different expense occupying a previewed row', async () => {
@@ -67,8 +73,11 @@ it('refuses a different expense occupying a previewed row', async () => {
   const path = 'config/categories/' + category.id;
   const body = {operationId: op(), rev:category.rev, name:'Новое имя'};
   const preview = await (await req(path+'?dry=1', body)).json();
-  mock.rows[1][6] = 'different-expense';
   const writes = mock.configWrites.length;
+  expect((await req(path, body)).status).toBe(409);
+  expect((await req(path, { ...body, operationId: op(), previewHash: preview.previewHash })).status).toBe(409);
+  expect(mock.configWrites).toHaveLength(writes);
+  mock.rows[1][6] = 'different-expense';
   expect((await req(path,{...body,previewHash:preview.previewHash})).status).toBe(409);
   expect(mock.configWrites).toHaveLength(writes);
 });
