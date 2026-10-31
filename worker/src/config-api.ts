@@ -2,7 +2,7 @@ import { categoryLabel, changeItem, configEmoji, configName, importCategories, i
 import { AppError, parseAmount, today, validMonth } from '../../shared/logic';
 import type { Config, ConfigCategory, ConfigItem } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
-import { CATEGORY_SHEET, ITEM_SHEET, MemoryOperations, categoryRow, configConflict, decodeConfig, headers, itemRow, planRows, type ConfigPlan, type OperationStorage } from './config-store';
+import { CATEGORY_SHEET, ITEM_SHEET, MemoryOperations, moveIdentity, categoryRow, configConflict, decodeConfig, headers, itemRow, planRows, type ConfigPlan, type OperationStorage } from './config-store';
 const stamp = () => `${today('Asia/Almaty')}T${new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date())}+05:00`;
 interface Receipt { signature: string; chunks: number; done: boolean; count: number }
 export class ConfigApi {
@@ -60,7 +60,7 @@ export class ConfigApi {
       if (b.targetId) { const destination = config.categories.find(c => c.id === b.targetId && !c.archived && c.id !== id); if (!old || !destination || !category.archived) throw new AppError(422, 'target', 'Выберите активную категорию для переноса'); target = categoryLabel(destination); }
       if (old && (target !== categoryLabel(old) || dry)) {
         const snapshot = await this.adapter.read(false);
-        plan.moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target }] : []);
+        plan.moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target, identity: moveIdentity(row) }] : []);
       }
       if ('move' in b) {
         if (!old || old.archived || ![-1, 1].includes(Number(b.move))) throw new AppError(422, 'sort', 'Нельзя переместить категорию');

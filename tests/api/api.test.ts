@@ -24,3 +24,17 @@ describe('API', () => {
   it('csv UTF-8 BOM', async () => { const r = await request('export.csv'); expect(r.headers.get('Content-Type')).toContain('text/csv'); const bytes = new Uint8Array(await r.arrayBuffer()); expect([...bytes.slice(0, 3)]).toEqual([239, 187, 191]); });
   it('чужой origin запрещён', async () => expect((await api.fetch(new Request('https://app.test/api/health', { headers: { Origin: 'https://evil.test', 'X-App-Key': 'test-key-only' } }))).status).toBe(403));
 });
+
+describe('целостность данных', () => {
+  it('правка комментария сохраняет исходную формулу суммы', async () => {
+    const { history } = await (await request('bootstrap')).json();
+    expect((await request('expenses/2', 'PATCH', { fp: history[0].fp, comment: 'Заметка' })).status).toBe(200);
+    expect(mock.rows[1][3]).toBe(mock.formulaAmount);
+    expect(mock.writes[0].ranges).toEqual(['E2']);
+  });
+  it('защищает ручной комментарий в первой свободной строке', async () => {
+    mock.rows[61][4] = 'Заметка';
+    expect((await request('expenses','POST',input())).status).toBe(409);
+    expect(mock.rows[61][4]).toBe('Заметка');
+  });
+});

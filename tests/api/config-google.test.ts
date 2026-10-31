@@ -16,7 +16,7 @@ function fixture() {
     if (url.pathname.endsWith('/values:batchGet')) {
       const ranges = url.searchParams.getAll('ranges'); reads.push(...ranges);
       const legacy = await mock.readLegacyItems(), snapshot = await mock.read();
-      return Response.json({ valueRanges: ranges.map(range => ({ values: range === "'Ввод данных'!A:H" || range === "'Ввод данных'!A1:C1006" ? snapshot.rows : range === "'Справочник'!A3:B" ? snapshot.categories.map(c => [c.name, c.limit]) : range.endsWith('!A3:D') ? legacy.income : range.endsWith('!F3:K') ? legacy.fixed : range.endsWith('!M3:S') ? [] : tables.get(range.split("'")[1]) || [] })) });
+      return Response.json({ valueRanges: ranges.map(range => ({ values: range === "'Ввод данных'!A:H" || range === "'Ввод данных'!A1:H1006" ? snapshot.rows : range === "'Справочник'!A3:B" ? snapshot.categories.map(c => [c.name, c.limit]) : range.endsWith('!A3:D') ? legacy.income : range.endsWith('!F3:K') ? legacy.fixed : range.endsWith('!M3:S') ? [] : tables.get(range.split("'")[1]) || [] })) });
     }
     if (url.pathname.endsWith('/values:batchUpdate')) {
       const body = JSON.parse(String(init?.body)); expect(body.valueInputOption).toBe('RAW');
@@ -42,7 +42,19 @@ it('Google settings setup and rename issue only whitelisted requests and preserv
   await f.api.mutate(`/api/config/categories/${cat.id}`, body, false);
   expect(f.writes.slice(writeCount).filter(r => r.startsWith("'Ввод данных'"))).toHaveLength(preview.count);
   expect(f.mock.rows.map(r => r.filter((_, i) => i !== 2))).toEqual(before.map(r => r.filter((_, i) => i !== 2)));
-  expect(f.mock.rows).toHaveLength(1006); expect(f.reads).toContain("'Ввод данных'!A1:C1006");
+  expect(f.mock.rows).toHaveLength(1006); expect(f.reads).toContain("'Ввод данных'!A1:H1006");
 });
 it('Google resumes a single precreated sheet and never replaces existing settings', async () => { const f = fixture(); f.tables.set(ITEM_SHEET, []); const c = await f.api.setup(); expect(f.structural).toHaveLength(1); expect(c.configured).toBe(true); expect(c.items).toHaveLength(8); });
 it('Google refuses stale settings and foreign C values before a write', async () => { const f = fixture(); await f.api.setup(); const before = structuredClone(f.tables.get(CATEGORY_SHEET)![1]), after = [...before]; after[2] = 'Changed'; after[6] = 2; f.mock.rows[1][2] = 'External'; const count = f.writes.length; await expect(f.adapter.applyConfig({ writes: [{ sheet: CATEGORY_SHEET, row: 2, before, after }], moves: [{ row: 2, from: '🍔 Продукты и супермаркеты', to: '🍎 Changed' }] })).rejects.toThrow('Настройки изменились'); expect(f.writes).toHaveLength(count); });
+
+it('rejects a replacement expense with the same category', async () => {
+  const f = fixture(), config = await f.api.setup(), c = config.categories[0];
+  const apply = f.adapter.applyConfig.bind(f.adapter);
+  f.adapter.applyConfig = plan => {
+    f.mock.rows[1][6] = 'replacement';
+    return apply(plan);
+  };
+  const count = f.writes.length;
+  await expect(f.api.mutate('/api/config/categories/'+c.id, {operationId:crypto.randomUUID(), rev:c.rev, name:'Новое'}, false)).rejects.toThrow('Настройки изменились');
+  expect(f.writes).toHaveLength(count);
+});

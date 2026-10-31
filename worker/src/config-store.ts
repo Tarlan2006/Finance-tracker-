@@ -5,7 +5,7 @@ export type ConfigSheet = typeof CATEGORY_SHEET | typeof ITEM_SHEET;
 export const headers = { [CATEGORY_SHEET]: ['id', 'emoji', 'name', 'limit', 'archived', 'sort', 'rev', 'updated_at'], [ITEM_SHEET]: ['id', 'kind', 'name', 'amount', 'from_month', 'to_month', 'rev', 'updated_at'] };
 export interface ConfigTables { categories: Row[] | null; items: Row[] | null; capacity: Record<ConfigSheet, number> }
 export interface ConfigWrite { sheet: ConfigSheet; row: number; before: Row; after: Row }
-export interface ConfigPlan { writes: ConfigWrite[]; moves: { row: number; from: string; to: string }[] }
+export interface ConfigPlan { writes: ConfigWrite[]; moves: { row: number; from: string; to: string; identity?: string }[] }
 export interface ConfigStorage { readConfigTables(): Promise<ConfigTables>; readLegacyItems(): Promise<{ income: Row[]; fixed: Row[] }>; createConfigSheets(): Promise<void>; applyConfig(plan: ConfigPlan): Promise<void> }
 export interface OperationStorage { get<T>(key: string): Promise<T | undefined>; put(key: string, value: unknown): Promise<unknown> }
 export class MemoryOperations implements OperationStorage { private values = new Map<string, unknown>(); async get<T>(key: string) { return this.values.get(key) as T | undefined; } async put(key: string, value: unknown) { this.values.set(key, structuredClone(value)); } }
@@ -32,11 +32,12 @@ export function planRows(tables: ConfigTables, sheet: ConfigSheet, values: Row[]
     rows[index] = after;
   }
 }
+export function moveIdentity(row: Row) { return JSON.stringify([0,1,3,4,6,7].map(i => row[i] ?? '')); }
 export function verifyPlan(plan: ConfigPlan, tables: ConfigTables, journal: Row[]) {
   for (const w of plan.writes) {
     if (![CATEGORY_SHEET, ITEM_SHEET].includes(w.sheet) || !Number.isSafeInteger(w.row) || w.row < 1 || w.row > tables.capacity[w.sheet] || w.after.length !== 8) throw new AppError(422, 'range', 'Недопустимый диапазон настроек');
     const now = (w.sheet === CATEGORY_SHEET ? tables.categories : tables.items)?.[w.row - 1] || [];
     if (!sameRow(now, w.before) && !sameRow(now, w.after)) throw configConflict();
   }
-  for (const m of plan.moves) { if (!Number.isInteger(m.row) || m.row < 2 || m.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала'); const now = String(journal[m.row - 1]?.[2] || ''); if (now !== m.from && now !== m.to) throw configConflict(); }
+  for (const m of plan.moves) { if (!Number.isInteger(m.row) || m.row < 2 || m.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала'); const now = String(journal[m.row - 1]?.[2] || ''); if (m.identity !== moveIdentity(journal[m.row - 1] || []) || (now !== m.from && now !== m.to)) throw configConflict(); }
 }

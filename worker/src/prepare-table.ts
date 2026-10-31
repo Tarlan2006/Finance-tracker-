@@ -12,7 +12,10 @@ interface Plan { sheets: Sheet[]; categories: Row[]; done: boolean }
 export interface PreparationBackend { sheets(): Promise<Sheet[]>; create(plan: Plan, missing: Sheet[]): Promise<void>; valid(plan: Plan): Promise<boolean> }
 export class TablePreparation {
   constructor(private backend: PreparationBackend, private storage: OperationStorage, private expenseName: string) {}
-  async status() { const plan = await this.storage.get<Plan>('table-preparation'); const sheets = await this.backend.sheets(); if (plan?.done) return { ready: sheets.some(s => s.title === this.expenseName), native: true }; return { ready: !plan && sheets.some(s => s.title === this.expenseName), native: !!plan }; }
+  async status() { const plan = await this.storage.get<Plan>('table-preparation'); const sheets = await this.backend.sheets(); if (plan?.done) {
+      if (!plan.sheets.every(p => sheets.some(s => s.id === p.id && s.title === p.title))) throw new AppError(409, 'prepare_conflict', 'Подключённый лист заменён или переименован. Проверьте таблицу.');
+      return { ready: true, native: true };
+    } return { ready: !plan && sheets.some(s => s.title === this.expenseName), native: !!plan }; }
   async prepare() {
     const sheets = await this.backend.sheets(), names = [this.expenseName, CATEGORY_SHEET, ITEM_SHEET];
     let plan = await this.storage.get<Plan>('table-preparation');

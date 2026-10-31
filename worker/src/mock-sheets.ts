@@ -1,7 +1,7 @@
 import { calendarDate } from '../../shared/dates';
 import { fromDateCell, serialDate, shiftMonth, today } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot } from '../../shared/types';
-import type { SheetsAdapter } from './sheets';
+import { expenseColumns, type SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const mockCategories: Category[] = [
   ['🍔 Продукты и супермаркеты', 60000], ['☕ Кафе и рестораны', 40000], ['🚗 Транспорт и такси', 20000],
@@ -37,9 +37,20 @@ export class MockSheetsAdapter implements SheetsAdapter {
     });
     return { rows, categories: this.native ? [] : structuredClone(mockCategories), summaries: this.native ? [] : summaries };
   }
-  async write(row: number, e: ExpenseInput) {
+  async write(row: number, e: ExpenseInput, previous?: ExpenseInput) {
     this.assertRow(row);
     const old = this.rows[row - 1] || [];
+    if (previous) {
+      const ranges: string[] = [];
+      expenseColumns.forEach((key, i) => {
+        if (key && previous[key] !== e[key]) {
+          old[i] = key === 'date' ? serialDate(e.date) : e[key];
+          ranges.push(String.fromCharCode(65+i) + row);
+        }
+      });
+      if (ranges.length) this.writes.push({ row, ranges });
+      return;
+    }
     this.rows[row - 1] = [serialDate(e.date), e.name, e.category, e.amount, e.comment, old[5] ?? '', e.id, e.source];
     this.writes.push({ row, ranges: [`A${row}:E${row}`, `G${row}:H${row}`] });
   }
@@ -48,5 +59,5 @@ export class MockSheetsAdapter implements SheetsAdapter {
   async readConfigTables() { return structuredClone(this.tables); }
   async readLegacyItems() { return { income: [['2026-09', 200000, 52000], ['2026-10', 200000, 60000], ['2026-11', '', ''], ['2026-12', '', '']], fixed: [['2026-09', 730, 24000, 5432, 60000], ['2026-10', 730, 24000, 9000, 60000]] }; }
   async createConfigSheets() { if (!this.tables.categories) { this.tables.categories = []; this.createdSheets.push(CATEGORY_SHEET); } if (!this.tables.items) { this.tables.items = []; this.createdSheets.push(ITEM_SHEET); } }
-  async applyConfig(plan: ConfigPlan) { verifyPlan(plan, this.tables, this.rows); for (const move of plan.moves) this.rows[move.row - 1][2] = move.to; for (const write of plan.writes) (write.sheet === CATEGORY_SHEET ? this.tables.categories! : this.tables.items!)[write.row - 1] = structuredClone(write.after); this.configWrites.push(structuredClone(plan)); }
+  async applyConfig(plan: ConfigPlan) { verifyPlan(plan, this.tables, (await this.read()).rows); for (const move of plan.moves) this.rows[move.row - 1][2] = move.to; for (const write of plan.writes) (write.sheet === CATEGORY_SHEET ? this.tables.categories! : this.tables.items!)[write.row - 1] = structuredClone(write.after); this.configWrites.push(structuredClone(plan)); }
 }

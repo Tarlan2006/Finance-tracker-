@@ -2,7 +2,7 @@ import { AppError, clean, serialDate } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot, Summary } from '../../shared/types';
 import type { Env } from './env';
 import { GoogleAuth, retryFetch } from './google-auth';
-import type { SheetsAdapter } from './sheets';
+import { expenseColumns, type SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const quoteSheet = (name: string) => `'${name.replace(/'/g, "''")}'`;
 export class GoogleSheetsAdapter implements SheetsAdapter {
@@ -12,7 +12,12 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   private async request(path: string, init: RequestInit = {}) {
     if (!this.env.SHEET_ID) throw new AppError(503, 'configuration', 'SHEET_ID не настроен');
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.env.SHEET_ID)}${/^[?:]/.test(path) ? '' : '/'}${path}`;
-    const call = async () => retryFetch(this.fetcher, url, { ...init, headers: { Authorization: `Bearer ${await this.auth.token()}`, 'Content-Type': 'application/json' } });
+    const call = async () => {
+      const options = { ...init, headers: { Authorization: `Bearer ${await this.auth.token()}`, 'Content-Type': 'application/json' } };
+      // Retry reads. A mutation with an ambiguous outcome must start again at the row check.
+      if (init.method === 'POST') return this.fetcher(url, { ...options, signal: AbortSignal.timeout(15000) });
+      return retryFetch(this.fetcher, url, options);
+    };
     let response = await call();
     if (response.status === 401) { this.auth.invalidate(); response = await call(); }
     if (!response.ok) throw new AppError(503, 'sheets', 'Google Sheets недоступен. Проверьте доступ сервисного аккаунта и названия листов');
@@ -52,8 +57,17 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
     const sheet = quoteSheet(this.env.SHEET_NAME_EXPENSES);
     return [`${sheet}!A${row}:E${row}`, `${sheet}!G${row}:H${row}`];
   }
-  async write(row: number, e: ExpenseInput) {
+  async write(row: number, e: ExpenseInput, previous?: ExpenseInput) {
     const [first, last] = this.ranges(row);
+    if (previous) {
+      const data = expenseColumns.flatMap((key, index) => {
+        if (!key || previous[key] === e[key]) return [];
+        const cell = String.fromCharCode(65 + index) + row;
+        return [{ range: quoteSheet(this.env.SHEET_NAME_EXPENSES) + '!' + cell, values: [[key === 'date' ? serialDate(e.date) : e[key]]] }];
+      });
+      if (data.length) await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
+      return;
+    }
     // RAW preserves text verbatim and the numeric Sheets date serial; never evaluates user strings.
     await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: first, values: [[serialDate(e.date), e.name, e.category, e.amount, e.comment]] }, { range: last, values: [[e.id, e.source]] }] }) });
   }
@@ -73,7 +87,7 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   }
   async applyConfig(plan: ConfigPlan) {
     const tables = await this.readConfigTables();
-    const journal = plan.moves.length ? (await this.values([`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A1:C1006`]))[0]?.values || [] : [];
+    const journal = plan.moves.length ? (await this.values([`${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!A1:H1006`]))[0]?.values || [] : [];
     verifyPlan(plan, tables, journal);
     const data = [...plan.moves.filter(m => journal[m.row - 1]?.[2] === m.from).map(m => ({ range: `${quoteSheet(this.env.SHEET_NAME_EXPENSES)}!C${m.row}`, values: [[m.to]] })), ...plan.writes.map(w => ({ range: `${quoteSheet(w.sheet)}!A${w.row}:H${w.row}`, values: [w.after] }))];
     // One atomic RAW request: journal C and settings revisions commit together.
