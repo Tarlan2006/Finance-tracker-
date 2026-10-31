@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
 const base = process.argv[2];
-if (!base || !/^https:\/\/finance-tracker\.[a-z0-9-]+\.workers\.dev\/?$/.test(base)) throw new Error('Передайте HTTPS URL finance-tracker на workers.dev');
+if (!base || !/^https:\/\/finance-tracker\.tarlan-b06\.workers\.dev\/?$/.test(base)) throw new Error('Передайте HTTPS URL finance-tracker на workers.dev');
 let platformRetries = 0;
 async function read(path, headers = {}) {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const response = await fetch(new URL(path, base), { headers, signal: AbortSignal.timeout(20000) });
+    const response = await fetch(new URL(path, base), { redirect: 'error', headers, signal: AbortSignal.timeout(20000) });
     const platform404 = response.status === 404 && response.headers.get('content-type')?.includes('text/html');
     if ((!platform404 && response.status < 500) || attempt === 4) return response;
     platformRetries++;
@@ -29,7 +29,7 @@ try {
   const result = { url: base, health: true, unauthorizedStatus: 401, securityHeaders: true, accounts: accounts.map(a => a.login), liveRead: false, sheetsWrites: 0, adminCalls: 0 };
   if (!vars.VERIFY_LOGIN || !vars.VERIFY_PASSWORD) { console.log(JSON.stringify({ ...result, skipped: 'VERIFY_LOGIN/VERIFY_PASSWORD не заданы: чтение данных пропущено', platformRetries }, null, 2)); }
   else {
-    const login = await fetch(new URL('/api/login', base), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: vars.VERIFY_LOGIN, password: vars.VERIFY_PASSWORD }), signal: AbortSignal.timeout(20000) });
+    const login = await fetch(new URL('/api/login', base), { redirect: 'error', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: vars.VERIFY_LOGIN, password: vars.VERIFY_PASSWORD }), signal: AbortSignal.timeout(20000) });
     if (!login.ok) throw new Error('Не удалось войти проверочным аккаунтом, HTTP ' + login.status);
     const auth = await login.json(); sessionToken = auth.token;
     if (auth.account.mustChangePassword) throw new Error('Проверочному аккаунту требуется смена пароля человеком');
@@ -45,4 +45,4 @@ try {
     console.log(JSON.stringify({ ...result, liveRead: true, expenseCount: b.history.length, categories: b.categories.length, settingsConfigured: config.configured, summariesMatch: match, bootstrapMs, platformRetries }, null, 2));
   }
 } catch (error) { console.error('Deployment verification failed:', error.message); process.exitCode = 1; }
-finally { if (sessionToken) { try { const r = await fetch(new URL('/api/logout', base), { method: 'POST', headers: { 'X-App-Key': sessionToken }, signal: AbortSignal.timeout(20000) }); if (!r.ok) { console.error('Проверочная сессия не отозвана, HTTP ' + r.status); process.exitCode = 1; } } catch { console.error('Не удалось завершить проверочную сессию. Отзовите её в аккаунте.'); process.exitCode = 1; } } }
+finally { if (sessionToken) { try { const r = await fetch(new URL('/api/logout', base), { redirect: 'error', method: 'POST', headers: { 'X-App-Key': sessionToken }, signal: AbortSignal.timeout(20000) }); if (!r.ok) { console.error('Проверочная сессия не отозвана, HTTP ' + r.status); process.exitCode = 1; } } catch { console.error('Не удалось завершить проверочную сессию. Отзовите её в аккаунте.'); process.exitCode = 1; } } }

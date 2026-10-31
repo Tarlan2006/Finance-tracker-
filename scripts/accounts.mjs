@@ -27,10 +27,10 @@ async function hidden(prompt) {
 export async function main(args = process.argv.slice(2)) {
   const { command, data } = parseArguments(args), vars = { ...parseEnv(await readFile('.dev.vars', 'utf8').catch(() => '')), ...process.env };
   const url = vars.WORKER_URL;
-  if (!url || !/^https:\/\/finance-tracker\.[a-z0-9-]+\.workers\.dev\/?$/.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(url)) throw new Error('Задайте WORKER_URL существующего Worker или локального mock');
+  if (!url || !/^https:\/\/finance-tracker\.tarlan-b06\.workers\.dev\/?$/.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(url)) throw new Error('Задайте WORKER_URL существующего Worker или локального mock');
   if (!vars.ADMIN_TOKEN) throw new Error('Задайте ADMIN_TOKEN в окружении или .dev.vars');
   if (command === 'add' || command === 'set-password') { const password = await hidden('Пароль (ввод скрыт): '), repeat = await hidden('Повторите пароль: '); if (password !== repeat) throw new Error('Пароли не совпадают'); if ([...password].length < 5 || [...password].length > 128) throw new Error('Пароль: от 5 до 128 символов'); data.password = password; }
-  const r = await fetch(new URL(`/api/admin/${command}`, url), { method: command === 'list' ? 'GET' : 'POST', headers: { Authorization: `Bearer ${vars.ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined, signal: AbortSignal.timeout(30000) });
+  const r = await fetch(new URL(`/api/admin/${command}`, url), { redirect: 'error', method: command === 'list' ? 'GET' : 'POST', headers: { Authorization: `Bearer ${vars.ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined, signal: AbortSignal.timeout(30000) });
   if (!r.headers.get('Content-Type')?.includes('application/json')) throw new Error(`Сервис недоступен (HTTP ${r.status})`);
   const result = await r.json(); if (!r.ok) throw new Error(typeof result.message === 'string' ? result.message : `Ошибка HTTP ${r.status}`);
   if (command === 'list') console.table(result.map(a => ({ login: a.login, имя: a.displayName, таблица: a.hasSheet, сменитьПароль: a.mustChangePassword, отключён: a.disabled, сессии: a.sessions, парольИзменён: new Date(a.passwordChangedAt).toISOString() })));

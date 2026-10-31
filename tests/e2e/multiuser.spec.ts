@@ -50,3 +50,14 @@ for (const width of [360, 412, 768, 1440]) test(`accounts: visual screens ${widt
   const page = await context.newPage(); await fixture(page); const shot = async (name: string) => { expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: `tests/screenshots/multiuser/${name}-${width}-${info.project.name}.png`, fullPage: true }); };
   try { await page.goto('/'); await expect(page.getByLabel('Аккаунт', { exact: true }).locator('option')).toHaveCount(2); await shot('login'); await login(page); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible(); await account(page); await expect(page.getByText('Это устройство', { exact: true })).toBeVisible(); await shot('account'); await page.getByRole('button', { name: 'Сменить пароль', exact: true }).click(); await shot('password'); await page.getByRole('button', { name: '← Аккаунт' }).click(); await page.getByRole('button', { name: 'Выйти', exact: true }).click(); await login(page, 'aru'); await expect(page.getByRole('button', { name: 'Подготовить таблицу' })).toBeVisible(); await shot('prepare'); } finally { await context.close(); }
 });
+
+test('payment link leaves recovery actions available when bootstrap fails', async ({page}) => {
+  await fixture(page);
+  await page.route('**/api/bootstrap', route => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'Нет связи с таблицей'})}));
+  await page.goto('/?amount=100&merchant=example');
+  await login(page);
+  await expect(page.getByRole('alert')).toContainText('Нет связи с таблицей');
+  await page.getByRole('button',{name:'Обновить',exact:true}).click();
+  await page.getByRole('button',{name:'Выйти',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Войти',exact:true})).toBeVisible();
+});

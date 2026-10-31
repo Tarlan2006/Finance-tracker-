@@ -19,10 +19,15 @@ export function validMonth(month: string) { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(
 export const fingerprint = (e: ExpenseInput) => `v2:${JSON.stringify([e.date, e.amount, e.category, e.name, e.comment, e.id, e.source])}`;
 export const displayName = (e: Pick<ExpenseInput, 'name' | 'category'>) => e.name || e.category || 'Без категории';
 export const firstEmptyRow = (rows: Row[]) => { const i = rows.findIndex((row, idx) => idx > 0 && [0, 1, 2, 3].every(c => row[c] === '' || row[c] == null)); return i === -1 ? Math.max(2, rows.length + 1) : i + 1; };
-export function expensesFromRows(rows: Row[]): Expense[] {
+export function expensesFromRows(rows: Row[], invalidDateRows?: number[]): Expense[] {
   return rows.flatMap((r, i) => {
     if (!i || r[0] === '' || r[0] == null || typeof r[3] !== 'number' || !Number.isFinite(r[3])) return [];
-    const e: ExpenseInput = { date: fromDateCell(r[0]), name: clean(r[1]), category: clean(r[2]), amount: r[3], comment: clean(r[4]), id: clean(r[6]), source: clean(r[7]) || 'manual' };
+    const date = fromDateCell(r[0]);
+    if (!validDate(date)) {
+      invalidDateRows?.push(i + 1);
+      return [];
+    }
+    const e: ExpenseInput = { date, name: clean(r[1]), category: clean(r[2]), amount: r[3], comment: clean(r[4]), id: clean(r[6]), source: clean(r[7]) || 'manual' };
     // Display normalization must not hide a concurrent manual edit in Sheets.
     return [{ ...e, row: i + 1, fp: fingerprint({ ...e, name: String(r[1] ?? ''), category: String(r[2] ?? ''), comment: String(r[4] ?? ''), id: String(r[6] ?? ''), source: String(r[7] ?? '') }) }];
   });

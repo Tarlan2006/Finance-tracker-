@@ -39,3 +39,10 @@ it('rejects changed payloads and retries after deletion', async () => {
   expect((await req('expenses','POST',body)).status).toBe(409);
   expect(mock.writes).toHaveLength(2);
 });
+
+it('keeps healthy expenses visible and reports invalid dates', async () => {
+  mock.rows[1][0] = 'BAD-DATE';
+  const b = await (await req('bootstrap')).json();
+  expect(b.invalidDateRows).toEqual([2]);
+  expect(b.history).toHaveLength(59);
+});

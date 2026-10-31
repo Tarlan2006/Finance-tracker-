@@ -27,3 +27,10 @@ it('rebinding revokes old sessions and refuses expenses stamped for the previous
   expect(current.account.sheetVersion).toBe(2);
   expect((await f.request('expenses', {}, current.token)).status).toBe(409);
 });
+
+it('one blocked source cannot prevent login from another address', async () => {
+  const f = accountFixture();
+  for (let i=0; i<5; i++) await f.request('login',{login:'tarlan',password:'incorrect'});
+  const other = await f.request('login',{login:'tarlan',password:env.APP_KEY},'', 'POST', {'CF-Connecting-IP':'192.0.2.99'});
+  expect(other.status).toBe(200);
+});

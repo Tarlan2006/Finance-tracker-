@@ -35,6 +35,7 @@ export class AccountsService {
     }
     const task = this.tail.then(async () => {
       const origin = request.headers.get('Origin'); if (origin && origin !== new URL(request.url).origin) return errorResponse(new AppError(403, 'origin', 'Запрос с другого сайта запрещён'));
+      if (new URL(request.url).pathname === '/api/health' && request.method === 'GET') return json({ ok: true });
       const s = await this.state();
       s.sessions = s.sessions.filter(x => x.expiresAt > this.now());
       for (const [k, r] of Object.entries(s.rates)) if (r.until <= this.now()) delete s.rates[k];
@@ -59,7 +60,6 @@ export class AccountsService {
   private async route(request: Request, s: State): Promise<Response | { account: Account }> {
     const path = new URL(request.url).pathname, method = request.method, ip = request.headers.get('CF-Connecting-IP') || 'local';
     if (path.startsWith('/api/admin/')) return this.admin(request, s, ip);
-    if (path === '/api/health' && method === 'GET') return json({ ok: true });
     if (path === '/api/accounts' && method === 'GET') { this.rate(s, 'list-global', 600); this.rate(s, `list:${ip}`, 60); return json(s.accounts.filter(a => !a.disabled).map(a => ({ login: a.login, displayName: a.displayName }))); }
     if (path === '/api/login' && method === 'POST') {
       this.rate(s, 'login-global', 200); this.rate(s, `login-ip:${ip}`, 30);
@@ -68,7 +68,9 @@ export class AccountsService {
       if (Object.keys(s.failures).length >= 5000 && keys.some(k => !s.failures[k])) throw new Limited(900);
       const a = s.accounts.find(a => a.login === login);
       const valid = await verifyPassword(password, a || s.dummy);
-      if (!a || !valid || a.disabled) { this.fail(s, keys); throw new AppError(401, 'credentials', 'Неверный логин или пароль'); }
+      if (!a || !valid || a.disabled) { // Count distinct failing sources toward the account-wide lockout. A single source
+        // exhausts its own bucket without preventing the owner signing in elsewhere.
+        this.fail(s, s.failures[keys[1]] ? [keys[1]] : keys); throw new AppError(401, 'credentials', 'Неверный логин или пароль'); }
       keys.forEach(k => delete s.failures[k]);
       const token = randomSecret(), now = this.now();
       const own = s.sessions.filter(x => x.accountId === a.id).sort((a, b) => a.lastUsedAt - b.lastUsedAt); if (own.length >= 20) s.sessions = s.sessions.filter(x => x.id !== own[0].id);
