@@ -14,6 +14,28 @@ async function read(path, headers = {}) {
     await new Promise(resolve => setTimeout(resolve, 2000 * 2 ** attempt));
   }
 }
+function verifySummaries(b, expectedCount) {
+  if (!Array.isArray(b.history) || !b.history.length || !Array.isArray(b.summaries) || !b.summaries.length)
+    throw new Error('Для сверки нужны расходы и месячные сводки');
+  if (b.invalidAmountRows?.length || b.invalidDateRows?.length)
+    throw new Error('Итоги неполные: в журнале есть ошибочные строки');
+  if (expectedCount !== undefined && (!/^\d+$/.test(expectedCount) || b.history.length !== Number(expectedCount)))
+    throw new Error('Количество расходов отличается от ожидаемого');
+  const totals = new Map();
+  for (const expense of b.history) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])-\d{2}$/.test(expense.date) || !Number.isFinite(expense.amount))
+      throw new Error('Невозможно сверить дату или сумму расхода');
+    const month = expense.date.slice(0, 7);
+    totals.set(month, (totals.get(month) ?? 0) + Math.round(expense.amount * 100));
+  }
+  for (const summary of b.summaries) {
+    if (!totals.has(summary.month)) throw new Error('Наборы месяцев журнала и сводок различаются');
+    if (!Number.isFinite(summary.journal) || totals.get(summary.month) !== Math.round(summary.journal * 100))
+      throw new Error('Суммы журнала не совпали со сводкой');
+    totals.delete(summary.month);
+  }
+  if (totals.size) throw new Error('Не для всех месяцев журнала есть сводки');
+}
 let sessionToken = '';
 try {
   const vars = { ...parseEnv(await readFile('.dev.vars', 'utf8').catch(() => '')), ...process.env };
@@ -39,10 +61,15 @@ try {
     const b = await response.json(); if (b.mock) throw new Error('Опубликованный Worker работает в mock');
     const configResponse = await read('/api/config', headers); if (!configResponse.ok) throw new Error('config HTTP ' + configResponse.status);
     const config = await configResponse.json();
-    const totals = b.history.reduce((out, e) => { const month = e.date.slice(0, 7); out[month] = (out[month] || 0) + e.amount; return out; }, {});
-    const match = b.summaries.every(s => Math.abs((totals[s.month] || 0) - s.journal) < .01); if (!match) throw new Error('Суммы журнала не совпали со сводкой');
-    for (let i = 0; i < 2; i++) { const start = performance.now(); const warm = await read('/api/bootstrap', headers); if (!warm.ok) throw new Error('Warm read failed'); await warm.json(); bootstrapMs.push(Math.round(performance.now() - start)); }
-    console.log(JSON.stringify({ ...result, liveRead: true, expenseCount: b.history.length, categories: b.categories.length, settingsConfigured: config.configured, summariesMatch: match, bootstrapMs, platformRetries }, null, 2));
+    verifySummaries(b, vars.VERIFY_EXPECTED_EXPENSES);
+    for (let i = 0; i < 2; i++) {
+      const start = performance.now();
+      const warm = await read('/api/bootstrap', headers);
+      if (!warm.ok) throw new Error('Warm read failed');
+      verifySummaries(await warm.json(), String(b.history.length));
+      bootstrapMs.push(Math.round(performance.now() - start));
+    }
+    console.log(JSON.stringify({ ...result, liveRead: true, expenseCount: b.history.length, categories: b.categories.length, settingsConfigured: config.configured, summariesMatch: true, bootstrapMs, platformRetries }, null, 2));
   }
 } catch (error) { console.error('Deployment verification failed:', error.message); process.exitCode = 1; }
 finally { if (sessionToken) { try { const r = await fetch(new URL('/api/logout', base), { redirect: 'error', method: 'POST', headers: { 'X-App-Key': sessionToken }, signal: AbortSignal.timeout(20000) }); if (!r.ok) { console.error('Проверочная сессия не отозвана, HTTP ' + r.status); process.exitCode = 1; } } catch { console.error('Не удалось завершить проверочную сессию. Отзовите её в аккаунте.'); process.exitCode = 1; } } }
