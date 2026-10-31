@@ -6,12 +6,14 @@ import { api, ApiError } from './api';
 import type { AccountSession, AccountView } from '../../../shared/accounts';
 import { accountApi, savedSession } from './account';
 import { storage } from './storage';
+import { classifyFailure, readSyncResult, syncText, type SyncResult } from './sync-result';
 import { readCachedBootstrap } from './data';
 import { allQueued, changeQueued, discardQueued, enqueue, flushQueue, retryQueued, setQueueKey, type Queued } from './queue';
 export function useFinance() {
   const [accountSession, setAccountSession] = useState<AccountSession | null>(savedSession), [accounts, setAccounts] = useState<{ login: string; displayName: string }[]>([]);
   const [loginName, setLoginName] = useState(storage.getItem('last-login') || 'tarlan');
   const [key, setKey] = useState(savedSession()?.token || ''), [keyInput, setKeyInput] = useState(''), [owner, setOwner] = useState('');
+  const [lastSync, setLastSync] = useState<SyncResult>();
   const [tableState, setTableState] = useState('');
   const [data, setData] = useState<Bootstrap | null>(null), [queue, setQueue] = useState<Queued[]>([]);
   const [online, setOnline] = useState(navigator.onLine), [error, setError] = useState(''), [toast, setToast] = useState(''), [loading, setLoading] = useState(false);
@@ -27,33 +29,83 @@ export function useFinance() {
   knownQueue.current = queue;
   const showError = useCallback((e: unknown) => setError(e instanceof Error ? e.message : 'Не удалось выполнить действие. Повторите'), []);
   const notify = useCallback((text: string) => { clearTimeout(toastTimer.current); setToast(text); toastTimer.current = setTimeout(() => setToast(''), 5000); }, []);
-  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); itemTimers.current.forEach(clearTimeout); itemTimers.current.clear(); setItemDeletions([]); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setAccountSession(null); setTableState(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
+  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); itemTimers.current.forEach(clearTimeout); itemTimers.current.clear(); setItemDeletions([]); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setLastSync(undefined); setAccountSession(null); setTableState(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
   useEffect(() => { if (key) return; let active = true; void accountApi<{ login: string; displayName: string }[]>('accounts').then(list => { if (active) { setAccounts(list); setLoginName(name => list.some(a => a.login === name) ? name : list[0]?.login || ''); } }).catch(() => { if (active) setError('Нет связи. Для входа нужен интернет'); }); return () => { active = false; }; }, [key]);
   useEffect(() => { const changed = (event: StorageEvent) => { if (event.key === 'app-key' && event.newValue !== session.current) closeSession(); }; window.addEventListener('storage', changed); return () => window.removeEventListener('storage', changed); }, [closeSession]);
   useEffect(() => { const pending = timers.current; return () => { pending.forEach(clearTimeout); clearTimeout(toastTimer.current); }; }, []);
   useEffect(() => { const pending = itemTimers.current; return () => pending.forEach(clearTimeout); }, []);
+  const expireSession = useCallback(async () => {
+    const active = () => session.current === key && storage.getItem('app-key') === key;
+    if (!active()) return;
+    await setQueueKey('', active);
+    if (!active()) return;
+    storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(cacheKey(owner));
+    closeSession();
+  }, [key, owner, cacheKey, closeSession]);
   const reload = useCallback(async () => {
     if (!key || !owner || session.current !== key) return;
     const request = ++sequence.current;
     try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
-    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await setQueueKey(''); storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(cacheKey(owner)); closeSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
-  }, [key, owner, showError, closeSession, cacheKey]);
-  const sync = useCallback(async () => {
+    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await expireSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
+  }, [key, owner, showError, expireSession, cacheKey]);
+  const sync = useCallback(async (manual = false) => {
     if (!owner || session.current !== key) return;
-    try { const displayed = knownQueue.current, before = await allQueued(owner); await flushQueue(); if (session.current !== key) return; const after = await allQueued(owner); setQueue(after); if (navigator.onLine && [...before, ...displayed].some(row => !after.some(item => item.id === row.id))) await reload(); }
-    catch (e) { if (session.current === key) showError(e); }
-  }, [owner, key, reload, showError]);
+    const report = (result: SyncResult) => {
+      if (session.current !== key) return;
+      storage.setItem('sync-result-' + owner, JSON.stringify(result));
+      setLastSync(result);
+    };
+    try {
+      const displayed = knownQueue.current, before = await allQueued(owner);
+      await flushQueue({ key, owner, manual, report });
+      if (session.current !== key) return;
+      const after = await allQueued(owner);
+      setQueue(after);
+      // Recover auth failures left by older clients as well.
+      if (after.some(row => row.status === 'error' && row.errorStatus === 401)) throw new ApiError(401, 'Войдите снова');
+      if (navigator.onLine && [...before, ...displayed].some(row => !after.some(item => item.id === row.id))) await reload();
+    } catch (error) {
+      if (session.current !== key) return;
+      const result = classifyFailure(error instanceof ApiError ? error : new ApiError(0, '', true, 'queue_storage'), navigator.onLine);
+      report(result);
+      if (result.kind === 'auth' || result.kind === 'password') {
+        try { await expireSession(); } catch (e) { showError(e); return; }
+      }
+      showError(new Error(syncText(result)));
+    }
+  }, [owner, key, reload, expireSession, showError]);
   useEffect(() => {
-    let active = true; const saved = savedSession(); if (!key || !saved?.queueKey || saved.account.mustChangePassword) return;
-    void (async () => { try { if (storage.getItem('app-key') !== key) return; const id = await setQueueKey(key, () => active && session.current === key && storage.getItem('app-key') === key, saved); if (!active || session.current !== key) return; setOwner(id); const cache = readCachedBootstrap(storage.getItem(cacheKey(id))); if (cache) setData(cache); const rows = await allQueued(id); if (session.current === key) setQueue(rows); } catch { if (active) setError('Хранилище недоступно. Разрешите сохранение данных сайта'); } })();
-    return () => { active = false; };
+    let active = true, timer: ReturnType<typeof setTimeout>;
+    const saved = savedSession();
+    if (!key || !saved?.queueKey || saved.account.mustChangePassword) return;
+    const current = () => active && session.current === key && storage.getItem('app-key') === key;
+    async function initialize() {
+      if (!current() || !saved) return;
+      try {
+        const id = await setQueueKey(key, current, saved);
+        if (!current()) return;
+        setOwner(id);
+        setLastSync(readSyncResult(storage.getItem('sync-result-' + id)));
+        const cache = readCachedBootstrap(storage.getItem(cacheKey(id)));
+        if (cache) setData(cache);
+        const rows = await allQueued(id);
+        if (current()) setQueue(rows);
+      } catch (error) {
+        if (!current()) return;
+        const busy = error instanceof ApiError && error.code === 'queue_busy';
+        setError(busy ? error.message : 'Хранилище недоступно. Разрешите сохранение данных сайта');
+        if (busy) timer = setTimeout(() => void initialize(), 3000);
+      }
+    }
+    void initialize();
+    return () => { active = false; clearTimeout(timer); };
   }, [key, cacheKey]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
-    const network = () => { setOnline(navigator.onLine); if (navigator.onLine) { void sync(); void reload(); } }, message = () => void sync();
+    const network = () => { setOnline(navigator.onLine); if (navigator.onLine) { void sync(true); void reload(); } }, message = () => void sync();
     const channel = 'BroadcastChannel' in window ? new BroadcastChannel('tenge-sync') : null; if (channel) channel.onmessage = message;
     window.addEventListener('online', network); window.addEventListener('offline', network); navigator.serviceWorker?.addEventListener('message', message);
-    const timer = setInterval(() => { if (navigator.onLine) void sync(); }, 15000); void sync();
+    const timer = setInterval(() => { if (navigator.onLine) void sync(); }, 15000); void sync(true);
     return () => { clearInterval(timer); channel?.close(); window.removeEventListener('online', network); window.removeEventListener('offline', network); navigator.serviceWorker?.removeEventListener('message', message); };
   }, [sync, reload]);
   const loadMonths = useCallback(async (months: string[]) => {
@@ -75,7 +127,7 @@ export function useFinance() {
     const id = !s.account.mustChangePassword && s.queueKey ? await setQueueKey(s.token, () => true, s, previousPassword) : await setQueueKey('');
     if (!storage.setItem('account-session', JSON.stringify(s)) || !storage.setItem('app-key', s.token)) throw new Error('Разрешите хранение данных сайта для входа');
     if (session.current !== s.token) { setData(null); setQueue([]); setTableState(''); }
-    setOwner(id); session.current = s.token; setAccountSession(s); setKey(s.token);
+    setOwner(id); setLastSync(readSyncResult(storage.getItem('sync-result-' + id))); session.current = s.token; setAccountSession(s); setKey(s.token);
   }
   async function login() { setLoading(true); setError(''); try { const s = await accountApi<AccountSession>('login', '', { login: loginName, password: keyInput }); storage.setItem('last-login', loginName); await acceptSession(s, keyInput); setKeyInput(''); } catch (e) { showError(e instanceof TypeError ? new Error('Нет связи. Для входа нужен интернет') : e); } finally { setLoading(false); } }
   async function changePassword(currentPassword: string, password: string, confirmPassword: string) { const result = await accountApi<{ account: AccountView; queueKey: string }>('account/password', key, { currentPassword, password, confirmPassword }); await acceptSession({ token: key, ...result }, currentPassword); notify('Пароль изменён. Другие устройства вышли из аккаунта'); }
@@ -101,8 +153,8 @@ export function useFinance() {
   function undo(e: Expense) { clearTimeout(timers.current.get(e.row)); timers.current.delete(e.row); setDeletions(items => items.filter(x => x.row !== e.row)); }
   async function logout() { try { try { await accountApi('logout', key, {}); } catch (e) { if (!(e instanceof ApiError && e.status === 401)) throw e; } await setQueueKey(''); if (!storage.removeItem('app-key') || !storage.removeItem('account-session')) throw new Error(); storage.keys().filter(k => k.startsWith('bootstrap-')).forEach(k => storage.removeItem(k)); closeSession(); setError(''); return true; } catch { setError('Для безопасного выхода нужна сеть. Очередь сохранена; подключитесь и повторите'); return false; } }
   async function exportCsv(month: string) { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok || !r.headers.get('Content-Type')?.includes('text/csv')) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()), a = document.createElement('a'); a.href = url; a.download = `finance-tracker-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { showError(e); } }
-  return { key, keyInput, setKeyInput, accounts, loginName, setLoginName, account: accountSession?.account, changePassword, tableState, prepareTable, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, error, toast, loading, duplicate, setDuplicate, deletions, itemDeletions, undoItem, undo, login, logout, save, edit, remove, reload, sync, exportCsv, loadMonths, changeConfig, removeItem,
-    retry: (q: Queued) => void retryQueued(q).then(sync).catch(showError), removeQueue: (q: Queued) => void discardQueued(q).then(sync).catch(showError),
-    editQueue: async (q: Queued, patch: Partial<Expense>) => { const expense = validateExpense({ ...q.expense, ...patch }, data!.categories, data!.tz); await changeQueued(q, expense); await sync(); }
+  return { key, keyInput, setKeyInput, accounts, loginName, setLoginName, account: accountSession?.account, changePassword, tableState, prepareTable, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, lastSync, error, toast, loading, duplicate, setDuplicate, deletions, itemDeletions, undoItem, undo, login, logout, save, edit, remove, reload, sync, exportCsv, loadMonths, changeConfig, removeItem,
+    retry: (q: Queued) => void retryQueued(q).then(() => sync(true)).catch(showError), removeQueue: (q: Queued) => void discardQueued(q).then(() => sync()).catch(showError),
+    editQueue: async (q: Queued, patch: Partial<Expense>) => { const expense = validateExpense({ ...q.expense, ...patch }, data?.categories ?? [{name: q.expense.category, limit: 0}], data?.tz || 'Asia/Almaty'); await changeQueued(q, expense); await sync(); }
   };
 }

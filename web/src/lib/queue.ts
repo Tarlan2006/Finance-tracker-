@@ -1,12 +1,13 @@
 import type { ExpenseInput } from '../../../shared/types';
+import { classifyFailure, syncText, type SyncResult } from './sync-result';
 import { ApiError, readJson } from './http';
 import type { AccountSession } from '../../../shared/accounts';
-export interface Queued { id: string; owner: string; sheetVersion?: number; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; attempts: number; nextAt: number; created: number }
+export interface Queued { id: string; owner: string; sheetVersion?: number; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; lastAttempt?: SyncResult; attempts: number; nextAt: number; created: number }
 const restored = (row: Queued, owner = row.owner): Queued => ({ ...row, owner, nextAt: 0, ...([401, 403].includes(row.errorStatus || 0) || /Сеанс завершён|Неверный код доступа/.test(row.error || '') ? { status: 'queued' as const, error: undefined, errorStatus: undefined } : {}) });
 interface Config { id: 'config'; key: string; owner: string; encryptionKey?: string; accountId?: string; sheetVersion?: number }
 interface Sealed { id: string; iv: number[]; data: number[] }
 async function cipher(key: string) { return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)), 'AES-GCM', false, ['encrypt', 'decrypt']); }
-function db(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const r = indexedDB.open('tenge-finance-v1', 1); r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta', { keyPath: 'id' }); }; r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); }
+function db(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const r = indexedDB.open('tenge-finance-v1', 1); r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta', { keyPath: 'id' }); }; r.onblocked = () => reject(new ApiError(0, 'Хранилище занято', true, 'queue_storage')); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); }
 async function transaction<T>(store: string, mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   const d = await db();
   return new Promise((resolve, reject) => { const tx = d.transaction(store, mode); const req = run(tx.objectStore(store)); tx.oncomplete = () => { d.close(); resolve(req.result); }; tx.onerror = () => { d.close(); reject(tx.error); }; tx.onabort = () => { d.close(); reject(tx.error || new Error('Не удалось сохранить очередь')); }; });
@@ -79,8 +80,22 @@ async function atomic(run: (meta: IDBObjectStore, queue: IDBObjectStore) => void
     tx.onerror = tx.onabort = () => { database.close(); reject(tx.error || new Error('Хранилище недоступно')); };
   });
 }
-async function withSessionLock<T>(task: () => Promise<T>): Promise<T> { return navigator.locks ? await navigator.locks.request('tenge-session', task) : await task(); }
-async function withQueueLock<T>(task: () => Promise<T>): Promise<T> { return navigator.locks ? await navigator.locks.request('tenge-queue', task) : await task(); }
+async function withLock<T>(name: string, task: () => Promise<T>): Promise<T> {
+  if (!navigator.locks) return task();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    return await navigator.locks.request(name, { signal: controller.signal }, () => {
+      clearTimeout(timer);
+      return task();
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new ApiError(0, 'Очередь занята другой вкладкой', true, 'queue_busy');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+const withSessionLock = <T>(task: () => Promise<T>) => withLock('tenge-session', task);
+const withQueueLock = <T>(task: () => Promise<T>) => withLock('tenge-queue', task);
 export async function changeQueued(row: Queued, expense: ExpenseInput) {
   await withQueueLock(async () => {
     const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id));
@@ -90,35 +105,60 @@ export async function changeQueued(row: Queued, expense: ExpenseInput) {
 }
 export async function discardQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (!current || current.owner !== row.owner) throw new Error('Запись уже отправлена. Если нужно, удалите её через правку в журнале'); await removeQueued(row.id); }); }
 export async function retryQueued(row: Queued) { await withQueueLock(async () => { const current = await transaction<Queued | undefined>('queue', 'readonly', s => s.get(row.id)); if (current?.owner === row.owner) await putQueued({ ...current, status: 'queued', attempts: 0, nextAt: 0, error: undefined }); }); }
-async function drain() {
-  const config = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
-  if (!config) return;
+interface SyncContext {
+  owner: string;
+  key: string;
+  manual: boolean;
+  report: (result: SyncResult) => void;
+}
+async function drain({ owner, key, manual, report }: SyncContext) {
   let changed = false;
-  for (const item of await allQueued(config.owner)) {
+  for (const item of await allQueued(owner)) {
     if (item.status === 'error') continue;
-    if (item.nextAt > Date.now()) break;
-    // Recheck logout/account switch between network calls.
+    if (!manual && item.nextAt > Date.now()) break;
     const current = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
-    if (current?.owner !== config.owner) break;
+    if (current?.owner !== owner || current.key !== key) throw new ApiError(401, 'Войдите снова', false, 'unauthorized');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const r = await fetch('/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-App-Key': config.key, 'X-FT-Sheet-Version': String(item.sheetVersion || 1) }, body: JSON.stringify(item.expense), signal: AbortSignal.timeout(20000) });
-      const data = await readJson(r);
+      report({ at: Date.now(), kind: 'sending' });
+      if (!navigator.onLine) throw new TypeError('offline');
+      const response = await fetch('/api/expenses', {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'X-App-Key': key, 'X-FT-Sheet-Version': String(item.sheetVersion || 1) },
+        body: JSON.stringify(item.expense),
+      });
+      const data = await readJson(response);
       const saved = data.expense as Partial<ExpenseInput> | undefined;
-      if (saved?.id !== item.id) throw new ApiError(502, 'Сервер не подтвердил запись. Повторяем с тем же ID', true);
-      await removeQueued(item.id); changed = true;
+      if (!saved?.id || saved.id !== item.id) throw new ApiError(502, 'Сервер не подтвердил запись', true, 'invalid_response');
     } catch (error) {
-      if (error instanceof ApiError && !error.retryable) {
-        await putQueued({ ...item, status: 'error', error: error.message, errorStatus: error.status });
-        if (error.status === 401 || error.status === 403) break;
-        continue;
-      }
-      await putQueued({ ...item, attempts: item.attempts + 1, nextAt: Date.now() + Math.min(60000, 1000 * 2 ** item.attempts) }); break;
-    }
+      const result = classifyFailure(error, navigator.onLine);
+      const permanent = error instanceof ApiError && !error.retryable;
+      const message = permanent && result.kind === 'invalid' ? error.message : syncText(result);
+      await putQueued({ ...item, status: permanent ? 'error' : 'queued', error: message,
+        errorStatus: result.status, lastAttempt: result, attempts: (item.attempts || 0) + 1,
+        nextAt: Date.now() + Math.min(60000, 1000 * 2 ** (item.attempts || 0)) });
+      report(result);
+      if (result.kind === 'auth' || result.kind === 'password') throw error;
+      if (permanent) continue;
+      break;
+    } finally { clearTimeout(timer); }
+    await removeQueued(item.id);
+    changed = true;
+    report({ at: Date.now(), kind: 'sent' });
   }
   if (changed && 'BroadcastChannel' in globalThis) { const channel = new BroadcastChannel('tenge-sync'); channel.postMessage('queue-updated'); channel.close(); }
 }
-let running: Promise<void> | undefined;
-export function flushQueue(): Promise<void> {
-  if (!running) running = (async () => { if (navigator.locks) await navigator.locks.request('tenge-queue', drain); else await drain(); })().finally(() => { running = undefined; });
-  return running;
+let running: { key: string; promise: Promise<void> } | undefined;
+export async function flushQueue(context: SyncContext): Promise<void> {
+  while (running) {
+    const previous = running;
+    if (previous.key === context.key && !context.manual) return previous.promise;
+    // Do not attribute an earlier account's result to the new session.
+    try { await previous.promise; } catch (error) { if (previous.key === context.key) throw error; }
+    if (previous.key === context.key && running) return running.promise;
+  }
+  const promise = withQueueLock(() => drain(context)).finally(() => { running = undefined; });
+  running = { key: context.key, promise };
+  return promise;
 }

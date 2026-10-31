@@ -35,7 +35,7 @@ test('офлайн-очередь, перезагрузка оболочки, о
   await context.setOffline(true); await record(page, '275'); await expect(page.getByRole('status')).toContainText('Сохранено');
   await page.reload(); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible();
   await navigate(page, 'Траты'); await expect(page.getByText('В очереди · отправится при появлении сети')).toBeVisible();
-  await context.setOffline(false); await page.getByRole('button', { name: 'Повторить', exact: true }).click(); await settled(page, merchant);
+  await context.setOffline(false); await settled(page, merchant);
   await page.reload(); expect((await bootstrap(page)).history.filter((e: { name: string }) => e.name === merchant)).toHaveLength(1);
 });
 test('правка, отмена удаления и удаление без сдвига', async ({ page }, info) => {

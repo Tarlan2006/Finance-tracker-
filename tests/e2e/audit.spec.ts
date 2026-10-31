@@ -20,11 +20,11 @@ test('audit: today follows Almaty midnight in an already open form', async ({ pa
 });
 test('audit: HTML 200 never acknowledges or discards a queued expense', async ({ page }) => {
   await login(page); await page.route('**/api/expenses', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Platform page</h1>' }));
-  await save(page); await navigate(page, 'Траты'); await expect(page.getByText('В очереди · отправится при появлении сети')).toBeVisible();
+  await save(page); await navigate(page, 'Траты'); await expect(page.getByText('Сервер не подтвердил запись')).toBeVisible();
 });
 test('audit: platform HTML 404 remains retryable', async ({ page }) => {
   await login(page); await page.route('**/api/expenses', r => r.fulfill({ status: 404, contentType: 'text/html', body: '<h1>Not found</h1>' }));
-  await save(page); await navigate(page, 'Траты'); await expect(page.getByText('В очереди · отправится при появлении сети')).toBeVisible();
+  await save(page); await navigate(page, 'Траты'); await expect(page.getByText('Сервер не подтвердил запись')).toBeVisible();
 });
 test('audit: logout closes access in a second tab and removes history cache', async ({ page, context }) => {
   await login(page); const second = await context.newPage(); await second.goto('/'); await expect(second.getByRole('heading', { name: 'Траты' })).toBeVisible();

@@ -49,6 +49,13 @@ describe('Google auth and transport', () => {
   });
 });
 
+it.each([[403, 403, 'sheets_access'], [429, 429, 'rate_limit']] as const)('distinguishes Google write failure %s on mock fetch', async (upstream, status, code) => {
+  const fetcher: typeof fetch = async url => String(url).includes('oauth2')
+    ? Response.json({ access_token: 'fixture', expires_in: 3600 }) : new Response(null, { status: upstream });
+  const env: Env = { GOOGLE_SERVICE_ACCOUNT_JSON: credentials, SHEET_ID:'test', SHEET_NAME_EXPENSES:'Ввод данных', SHEET_NAME_INCOME:'Доходы и расходы', SHEET_NAME_DICT:'Справочник', TZ:'Asia/Almaty', CURRENCY:'₸', DUPLICATE_WINDOW_MIN:'3' };
+  await expect(new GoogleSheetsAdapter(env, fetcher).write(2, {id:'fixture', date:'2026-10-30', amount:100, name:'fixture', category:'еда', comment:'', source:'manual'})).rejects.toMatchObject({ status, code });
+});
+
 it('does not repeat an ambiguous Google clear', async () => {
   let clears = 0;
   const fetcher: typeof fetch = async url => {

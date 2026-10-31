@@ -20,6 +20,8 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
     };
     let response = await call();
     if (response.status === 401) { this.auth.invalidate(); response = await call(); }
+    if (response.status === 403) throw new AppError(403, 'sheets_access', 'Нет доступа к Google Sheets. Проверьте права сервисного аккаунта');
+    if (response.status === 429) throw new AppError(429, 'rate_limit', 'Google Sheets ограничил частоту запросов. Повторите позже');
     if (!response.ok) throw new AppError(503, 'sheets', 'Google Sheets недоступен. Проверьте доступ сервисного аккаунта и названия листов');
     return response.json() as Promise<{ valueRanges?: { values?: Row[] }[]; sheets?: { properties: { title: string; gridProperties: { rowCount: number } } }[] }>;
   }
