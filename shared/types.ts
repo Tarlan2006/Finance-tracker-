@@ -6,7 +6,7 @@ export interface ExpenseInput { id: string; date: string; amount: number; catego
 export interface Expense extends ExpenseInput { row: number; fp: string }
 export interface Summary { month: string; income: number; fixed: number; journal: number; total: number; balance: number; savings: number }
 export interface Suggestion { name: string; category: string; confidence: number }
-export interface Bootstrap { invalidDateRows?: number[]; freeRows?: number; categories: Category[]; config?: Config; expenses: Expense[]; history: Expense[]; summaries: Summary[]; summary: Summary | null; tz: string; currency: string; duplicateWindow: number; mock: boolean }
+export interface Bootstrap { invalidDateRows?: number[]; invalidAmountRows?: number[]; freeRows?: number; categories: Category[]; config?: Config; expenses: Expense[]; history: Expense[]; summaries: Summary[]; summary: Summary | null; tz: string; currency: string; duplicateWindow: number; mock: boolean }
 export type Cell = string | number | boolean | null;
 export type Row = Cell[];
 export interface Snapshot { rows: Row[]; categories: Category[]; summaries: Summary[] }

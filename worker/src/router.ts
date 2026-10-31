@@ -91,10 +91,11 @@ export class Api {
     const known = ['/api/bootstrap', '/api/expenses', '/api/quick', '/api/export.csv'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
     if (!known) throw new AppError(404, 'not_found', 'Маршрут не найден');
     const invalidDateRows: number[] = [];
-    const s = await this.snapshot(), history = expensesFromRows(s.rows, invalidDateRows);
+    const invalidAmountRows: number[] = [];
+    const s = await this.snapshot(), history = expensesFromRows(s.rows, invalidDateRows, invalidAmountRows);
     const month = validMonth(url.searchParams.get('month') || today(this.env.TZ).slice(0, 7));
     const expenses = history.filter(e => e.date.startsWith(month));
-    if (method === 'GET' && path === '/api/bootstrap') return json({ invalidDateRows, freeRows: 1005 - s.rows.slice(1, 1006).filter(row => [0,1,2,3,4,6,7].some(i => row[i] != null && row[i] !== '')).length, categories: s.categories, config: await this.config.read(), expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
+    if (method === 'GET' && path === '/api/bootstrap') return json({ invalidDateRows, invalidAmountRows, freeRows: 1005 - s.rows.slice(1, 1006).filter(row => [0,1,2,3,4,6,7].some(i => row[i] != null && row[i] !== '')).length, categories: s.categories, config: await this.config.read(), expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
     if (method === 'GET' && path === '/api/expenses') return json({ expenses });
     if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="finance-tracker-${month}.csv"`, 'Cache-Control': 'no-store' } });
     if (method === 'POST' && path === '/api/expenses') { const result = await this.create(await this.body(request), s); return json(result, result.duplicate ? 200 : 201); }

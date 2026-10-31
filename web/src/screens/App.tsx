@@ -70,6 +70,7 @@ export default function App() {
   const modal = (addOpen && !!data) || logoutPrompt || !!duplicate;
   return <div className="app-shell"><div className="app-content" inert={modal}>
     <header className={`app-header material ${compact ? 'compact' : ''}`}><span className="brand"><Logo/>Finance Tracker</span><strong className="compact-title">{tabs[tab].name}</strong><span className={`connection ${online ? '' : 'offline'}`}><i/>{online ? data?.mock ? 'Демо' : 'На связи' : 'Офлайн'}{queue.length ? ` · ${queue.length}` : ''}</span></header>
+    {!!data?.invalidAmountRows?.length && <div className="error-banner" role="status">Итоги неполные. Проверьте сумму в строках журнала: {data.invalidAmountRows.join(', ')}.</div>}
     {!!data?.invalidDateRows?.length && <div className="error-banner" role="status">Итоги неполные. Проверьте дату в строках журнала: {data.invalidDateRows.join(', ')}.</div>}
     {data?.freeRows !== undefined && data.freeRows <= 50 && <div className="error-banner" role="status">Свободных строк в журнале: {data.freeRows} из 1005. Запланируйте перенос или расширение таблицы.</div>}
     {error && <div className="error-banner" role="alert">{error}<div><button onClick={() => void finance.reload()}>Обновить</button><button onClick={requestLogout}>Выйти</button></div></div>}

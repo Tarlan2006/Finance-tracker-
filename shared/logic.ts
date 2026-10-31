@@ -19,9 +19,13 @@ export function validMonth(month: string) { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(
 export const fingerprint = (e: ExpenseInput) => `v2:${JSON.stringify([e.date, e.amount, e.category, e.name, e.comment, e.id, e.source])}`;
 export const displayName = (e: Pick<ExpenseInput, 'name' | 'category'>) => e.name || e.category || 'Без категории';
 export const firstEmptyRow = (rows: Row[]) => { const i = rows.findIndex((row, idx) => idx > 0 && [0, 1, 2, 3].every(c => row[c] === '' || row[c] == null)); return i === -1 ? Math.max(2, rows.length + 1) : i + 1; };
-export function expensesFromRows(rows: Row[], invalidDateRows?: number[]): Expense[] {
+export function expensesFromRows(rows: Row[], invalidDateRows?: number[], invalidAmountRows?: number[]): Expense[] {
   return rows.flatMap((r, i) => {
-    if (!i || r[0] === '' || r[0] == null || typeof r[3] !== 'number' || !Number.isFinite(r[3])) return [];
+    if (!i || ![0, 1, 2, 3, 4, 6, 7].some(column => r[column] != null && r[column] !== '')) return [];
+    if (typeof r[3] !== 'number' || !Number.isFinite(r[3])) {
+      invalidAmountRows?.push(i + 1);
+      return [];
+    }
     const date = fromDateCell(r[0]);
     if (!validDate(date)) {
       invalidDateRows?.push(i + 1);

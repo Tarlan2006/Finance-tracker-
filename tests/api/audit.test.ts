@@ -40,6 +40,14 @@ it('rejects changed payloads and retries after deletion', async () => {
   expect(mock.writes).toHaveLength(2);
 });
 
+it.each(['#VALUE!', 'text', ''])('reports a nonnumeric amount %j without counting empty rows', async amount => {
+  mock.rows[1][3] = amount;
+  const b = await (await req('bootstrap')).json();
+  expect(b.history).toHaveLength(59);
+  expect(b.invalidAmountRows).toEqual([2]);
+  expect(b.invalidDateRows).toEqual([]);
+});
+
 it('keeps healthy expenses visible and reports invalid dates', async () => {
   mock.rows[1][0] = 'BAD-DATE';
   const b = await (await req('bootstrap')).json();
