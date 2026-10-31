@@ -1,5 +1,5 @@
 import type { ExpenseInput } from '../../../shared/types';
-import { classifyFailure, syncText, type SyncResult } from './sync-result';
+import { classifyFailure, retryDelay, syncText, type SyncResult } from './sync-result';
 import { ApiError, readJson } from './http';
 import type { AccountSession } from '../../../shared/accounts';
 export interface Queued { id: string; owner: string; sheetVersion?: number; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; lastAttempt?: SyncResult; attempts: number; nextAt: number; created: number }
@@ -114,7 +114,9 @@ interface SyncContext {
 async function drain({ owner, key, manual, report }: SyncContext) {
   let changed = false;
   for (const item of await allQueued(owner)) {
+    if (document.hidden) break;
     if (item.status === 'error') continue;
+    if ((item.lastAttempt?.notBefore || 0) > Date.now()) break;
     if (!manual && item.nextAt > Date.now()) break;
     const current = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
     if (current?.owner !== owner || current.key !== key) throw new ApiError(401, 'Войдите снова', false, 'unauthorized');
@@ -135,9 +137,14 @@ async function drain({ owner, key, manual, report }: SyncContext) {
       const result = classifyFailure(error, navigator.onLine);
       const permanent = error instanceof ApiError && !error.retryable;
       const message = permanent && result.kind === 'invalid' ? error.message : syncText(result);
+      if (!permanent) {
+        const retryAfter = error instanceof ApiError ? error.retryAfter : 0;
+        result.nextAt = result.at + retryDelay(item.attempts || 0, retryAfter);
+        if (retryAfter) result.notBefore = result.at + retryAfter * 1000;
+      }
       await putQueued({ ...item, status: permanent ? 'error' : 'queued', error: message,
         errorStatus: result.status, lastAttempt: result, attempts: (item.attempts || 0) + 1,
-        nextAt: Date.now() + Math.min(60000, 1000 * 2 ** (item.attempts || 0)) });
+        nextAt: result.nextAt || 0 });
       report(result);
       if (result.kind === 'auth' || result.kind === 'password') throw error;
       if (permanent) continue;

@@ -9,11 +9,11 @@ const messages = {
   schema: 'Нарушена структура таблицы. Проверьте заголовки A:H',
   sheet: 'Таблица была заменена или отключена. Проверьте привязку',
   conflict: 'Конфликт с записью в таблице. Проверьте журнал',
-  invalid: 'Проверьте поля расхода', rate: 'Слишком много попыток. Повторите позже',
+  invalid: 'Проверьте поля расхода', rate: 'Слишком много попыток. Повторите позже', quota: 'Google ограничил частоту запросов',
   busy: 'Очередь занята другой вкладкой. Закройте её и повторите',
   client: 'Ошибка приложения при отправке. Откройте приложение снова', storage: 'Не удалось открыть очередь на устройстве', access: 'Google Sheets отклонил запрос (403). Проверьте доступ и квоту',
 };
-export type SyncResult = { at: number; kind: keyof typeof messages; status?: number };
+export type SyncResult = { at: number; kind: keyof typeof messages; status?: number; nextAt?: number; notBefore?: number };
 export const syncText = (result: SyncResult) => messages[result.kind];
 export function classifyFailure(error: unknown, online: boolean): SyncResult {
   const at = Date.now();
@@ -30,6 +30,7 @@ export function classifyFailure(error: unknown, online: boolean): SyncResult {
   else if (code === 'must_change_password') kind = 'password';
   else if (code === 'sheets_access') kind = 'access';
   else if (status === 403) kind = 'denied';
+  else if (code === 'sheets_quota') kind = 'quota';
   else if (status === 429) kind = 'rate';
   else if (status === 408) kind = 'timeout';
   else if (code === 'schema_mismatch') kind = 'schema';
@@ -39,6 +40,10 @@ export function classifyFailure(error: unknown, online: boolean): SyncResult {
   else if (status === 409) kind = 'conflict';
   else kind = 'invalid';
   return { at, kind, ...(status ? { status } : {}) };
+}
+export function retryDelay(attempt: number, retryAfter = 0, random = Math.random) {
+  const backoff = Math.min(300000, 5000 * 2 ** Math.min(attempt, 6) * (1 + random() * 0.5));
+  return Math.max(backoff, retryAfter * 1000);
 }
 export function readSyncResult(value: string | null): SyncResult | undefined {
   try {

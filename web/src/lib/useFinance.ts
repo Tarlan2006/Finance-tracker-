@@ -6,13 +6,15 @@ import { api, ApiError } from './api';
 import type { AccountSession, AccountView } from '../../../shared/accounts';
 import { accountApi, savedSession } from './account';
 import { storage } from './storage';
-import { classifyFailure, readSyncResult, syncText, type SyncResult } from './sync-result';
+import { classifyFailure, retryDelay, readSyncResult, syncText, type SyncResult } from './sync-result';
 import { readCachedBootstrap } from './data';
 import { allQueued, changeQueued, discardQueued, enqueue, flushQueue, retryQueued, setQueueKey, type Queued } from './queue';
 export function useFinance() {
   const [accountSession, setAccountSession] = useState<AccountSession | null>(savedSession), [accounts, setAccounts] = useState<{ login: string; displayName: string }[]>([]);
   const [loginName, setLoginName] = useState(storage.getItem('last-login') || 'tarlan');
   const [key, setKey] = useState(savedSession()?.token || ''), [keyInput, setKeyInput] = useState(''), [owner, setOwner] = useState('');
+  const [bootstrapRetry, setBootstrapRetry] = useState(0);
+  const readFailures = useRef(0), readNotBefore = useRef(0);
   const [lastSync, setLastSync] = useState<SyncResult>();
   const [tableState, setTableState] = useState('');
   const [data, setData] = useState<Bootstrap | null>(null), [queue, setQueue] = useState<Queued[]>([]);
@@ -29,7 +31,7 @@ export function useFinance() {
   knownQueue.current = queue;
   const showError = useCallback((e: unknown) => setError(e instanceof Error ? e.message : 'Не удалось выполнить действие. Повторите'), []);
   const notify = useCallback((text: string) => { clearTimeout(toastTimer.current); setToast(text); toastTimer.current = setTimeout(() => setToast(''), 5000); }, []);
-  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); itemTimers.current.forEach(clearTimeout); itemTimers.current.clear(); setItemDeletions([]); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setLastSync(undefined); setAccountSession(null); setTableState(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
+  const closeSession = useCallback(() => { session.current = ''; sequence.current++; timers.current.forEach(clearTimeout); timers.current.clear(); itemTimers.current.forEach(clearTimeout); itemTimers.current.clear(); setItemDeletions([]); setDeletions([]); setDuplicate(d => { d?.resolve(false); return null; }); setKey(''); setLastSync(undefined); setBootstrapRetry(0); readFailures.current = 0; readNotBefore.current = 0; setAccountSession(null); setTableState(''); setOwner(''); setData(null); setQueue([]); setToast(''); loadedMonths.current.clear(); pendingMonths.current.clear(); }, []);
   useEffect(() => { if (key) return; let active = true; void accountApi<{ login: string; displayName: string }[]>('accounts').then(list => { if (active) { setAccounts(list); setLoginName(name => list.some(a => a.login === name) ? name : list[0]?.login || ''); } }).catch(() => { if (active) setError('Нет связи. Для входа нужен интернет'); }); return () => { active = false; }; }, [key]);
   useEffect(() => { const changed = (event: StorageEvent) => { if (event.key === 'app-key' && event.newValue !== session.current) closeSession(); }; window.addEventListener('storage', changed); return () => window.removeEventListener('storage', changed); }, [closeSession]);
   useEffect(() => { const pending = timers.current; return () => { pending.forEach(clearTimeout); clearTimeout(toastTimer.current); }; }, []);
@@ -43,13 +45,19 @@ export function useFinance() {
     closeSession();
   }, [key, owner, cacheKey, closeSession]);
   const reload = useCallback(async () => {
-    if (!key || !owner || session.current !== key) return;
+    if (!key || !owner || session.current !== key || document.hidden || Date.now() < readNotBefore.current) return;
     const request = ++sequence.current;
-    try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
-    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await expireSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
+    try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; readFailures.current = 0; readNotBefore.current = 0; setBootstrapRetry(0); setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
+    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await expireSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } else if (e instanceof ApiError && e.retryable) {
+      const next = Date.now() + retryDelay(readFailures.current++, e.retryAfter);
+      readNotBefore.current = Date.now() + e.retryAfter * 1000;
+      setBootstrapRetry(next);
+      setError(syncText(classifyFailure(e, navigator.onLine)) + ' · следующая попытка в ' + new Date(next).toLocaleTimeString('ru-RU'));
+      return;
+    } showError(e); } }
   }, [key, owner, showError, expireSession, cacheKey]);
   const sync = useCallback(async (manual = false) => {
-    if (!owner || session.current !== key) return;
+    if (!owner || session.current !== key || document.hidden) return;
     const report = (result: SyncResult) => {
       if (session.current !== key) return;
       storage.setItem('sync-result-' + owner, JSON.stringify(result));
@@ -102,12 +110,39 @@ export function useFinance() {
   }, [key, cacheKey]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
-    const network = () => { setOnline(navigator.onLine); if (navigator.onLine) { void sync(true); void reload(); } }, message = () => void sync();
-    const channel = 'BroadcastChannel' in window ? new BroadcastChannel('tenge-sync') : null; if (channel) channel.onmessage = message;
-    window.addEventListener('online', network); window.addEventListener('offline', network); navigator.serviceWorker?.addEventListener('message', message);
-    const timer = setInterval(() => { if (navigator.onLine) void sync(); }, 15000); void sync(true);
-    return () => { clearInterval(timer); channel?.close(); window.removeEventListener('online', network); window.removeEventListener('offline', network); navigator.serviceWorker?.removeEventListener('message', message); };
-  }, [sync, reload]);
+    const resume = () => {
+      if (document.hidden || !navigator.onLine) return;
+      void sync(true);
+      if (!data && !bootstrapRetry) void reload();
+    };
+    const network = () => { setOnline(navigator.onLine); resume(); if (data && navigator.onLine && !document.hidden && !bootstrapRetry) void reload(); };
+    const message = () => { if (!document.hidden && navigator.onLine) void sync(); };
+    const channel = 'BroadcastChannel' in window ? new BroadcastChannel('tenge-sync') : null;
+    if (channel) channel.onmessage = message;
+    window.addEventListener('online', network); window.addEventListener('offline', network);
+    document.addEventListener('visibilitychange', resume);
+    navigator.serviceWorker?.addEventListener('message', message);
+    return () => {
+      window.removeEventListener('online', network); window.removeEventListener('offline', network);
+      document.removeEventListener('visibilitychange', resume);
+      navigator.serviceWorker?.removeEventListener('message', message); channel?.close();
+    };
+  }, [sync, reload, bootstrapRetry, data]);
+  useEffect(() => { if (!document.hidden) void sync(true); }, [sync]);
+  useEffect(() => {
+    const head = queue.find(row => row.status !== 'error');
+    if (!head || !online || document.hidden) return;
+    const at = Math.max(head.nextAt || 0, head.lastAttempt?.notBefore || 0, lastSync?.kind === 'busy' ? lastSync.at + 5000 : 0);
+    const timer = setTimeout(() => void sync(), Math.max(250, at - Date.now()));
+    return () => clearTimeout(timer);
+  }, [queue, online, lastSync, sync]);
+  useEffect(() => {
+    if (!bootstrapRetry || !online) return;
+    const retry = () => { if (!document.hidden && Date.now() >= bootstrapRetry) void reload(); };
+    const timer = setTimeout(retry, Math.max(0, bootstrapRetry - Date.now()));
+    document.addEventListener('visibilitychange', retry);
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', retry); };
+  }, [bootstrapRetry, online, reload]);
   const loadMonths = useCallback(async (months: string[]) => {
     if (!key || !owner || !navigator.onLine) return;
     await Promise.all(months.map(month => {

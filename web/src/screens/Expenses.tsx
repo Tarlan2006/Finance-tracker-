@@ -7,6 +7,7 @@ import { budget } from '../../../shared/config';
 import { exitSnapshot, transitionScreen, useEnter, useFlip } from '../motion';
 import Progress from '../motion/Progress';
 import MonthPicker from './MonthPicker';
+import RetryTime from './RetryTime';
 import Icon from './Icon';
 import { useMedia } from '../lib/media';
 import { useDismissGesture } from '../lib/gestures';
@@ -45,7 +46,7 @@ export default function Expenses({ data, openSettings, expenses: history, catego
     <div className="filters"><div className="search-field"><Icon name="search"/><input aria-label="Поиск трат" placeholder="Поиск трат" value={search} onChange={e => setSearch(e.target.value)}/></div><button className="icon-button" aria-label="Фильтры" title="Фильтры" aria-expanded={filtersOpen} aria-pressed={!!filter} onClick={() => setFiltersOpen(!filtersOpen)}><Icon name="filter"/></button></div>
     {filtersOpen && <div className="filter-panel panel"><label>Категория<select aria-label="Фильтр категории" value={filter} onChange={e => setFilter(e.target.value)}><option value="">Все категории</option>{categories.filter(c => !c.archived).map(c => <option key={c.name}>{c.name}</option>)}</select></label></div>}
     </>}
-    {queue.length > 0 && <div className="queue-section"><h2>Ожидают отправки · {queue.length}</h2>{queue.filter(q => !queueUndo.some(item => item.id === q.id)).map(q => <article key={q.id} className="queue-card" data-motion-key={`queue:${q.id}`}><strong>{displayName(q.expense)} · {money(q.expense.amount)}</strong><p>{q.status === 'error' ? `Ошибка: ${q.error}` : !navigator.onLine ? 'В очереди · отправится при появлении сети' : q.error && q.lastAttempt?.kind !== 'offline' ? q.error : 'В очереди · ожидает отправки'}</p><div className="queue-actions"><button onClick={() => retry(q)}>Повторить</button><button onClick={() => open({ ...q.expense, row: 0, fp: '' }, q)}>Исправить</button><button onClick={() => stageQueueRemoval(q)}>Убрать</button></div></article>)}</div>}
+    {queue.length > 0 && <div className="queue-section"><h2>Ожидают отправки · {queue.length}</h2>{queue.filter(q => !queueUndo.some(item => item.id === q.id)).map(q => <article key={q.id} className="queue-card" data-motion-key={`queue:${q.id}`}><strong>{displayName(q.expense)} · {money(q.expense.amount)}</strong><p>{q.status === 'error' ? `Ошибка: ${q.error}` : !navigator.onLine ? 'В очереди · отправится при появлении сети' : q.error && q.lastAttempt?.kind !== 'offline' ? q.error : 'В очереди · ожидает отправки'}</p>{q.status === 'queued' && <RetryTime at={q.lastAttempt?.nextAt}/>}<div className="queue-actions"><button onClick={() => retry(q)}>Повторить</button><button onClick={() => open({ ...q.expense, row: 0, fp: '' }, q)}>Исправить</button><button onClick={() => stageQueueRemoval(q)}>Убрать</button></div></article>)}</div>}
     {pending.length > 0 && <div className="review-section"><h2>Нужно проверить</h2>{pending.map(row)}</div>}
     {groups.map(([day, rows]) => <div key={day} className="day-group"><div className="label-row"><h2>{dayTitle(day)}</h2><span>{money(sum(rows))}</span></div><div className="day-card">{rows.map(row)}</div></div>)}
     {data && !list.length && <div className="empty"><span>◌</span><h2>Пока нет трат</h2><p>Добавьте первую запись или измените фильтр.</p></div>}
