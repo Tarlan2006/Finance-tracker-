@@ -28,7 +28,8 @@ export function useDismissGesture(ref: RefObject<HTMLElement | null>, open: bool
       if (e.type === 'pointerup' && (distance > 80 || distance > 24 && velocity > .45)) { close(); reset(); }
       else { reset(); animate(node, [{ transform: from }, { transform: base }], { duration: duration('dur-slow'), easing: token('spring') }); }
     };
-    node.addEventListener('pointerdown', down); node.addEventListener('pointermove', move); node.addEventListener('pointerup', finish); node.addEventListener('pointercancel', finish);
-    return () => { node.removeEventListener('pointerdown', down); node.removeEventListener('pointermove', move); node.removeEventListener('pointerup', finish); node.removeEventListener('pointercancel', finish); reset(); };
+    const hide = () => { if (document.hidden) { drag = null; reset(); } };
+    node.addEventListener('pointerdown', down); node.addEventListener('pointermove', move); node.addEventListener('pointerup', finish); node.addEventListener('pointercancel', finish); node.addEventListener('lostpointercapture', finish); document.addEventListener('visibilitychange', hide);
+    return () => { node.removeEventListener('pointerdown', down); node.removeEventListener('pointermove', move); node.removeEventListener('pointerup', finish); node.removeEventListener('pointercancel', finish); node.removeEventListener('lostpointercapture', finish); document.removeEventListener('visibilitychange', hide); reset(); };
   }, [ref, open, close]);
 }

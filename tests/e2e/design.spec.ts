@@ -16,7 +16,7 @@ async function prepare(page: Page, getData: () => Bootstrap, requested: Set<stri
 for (const [width, height] of [[360, 740], [412, 915], [768, 1024], [1024, 768], [1440, 900]]) test(`design interactions ${width}x${height}`, async ({ browser, request }, info) => {
   const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': 'mock-local-key' } })).json(); expect(base.mock).toBe(true);
   const data = fixture(base), requested = new Set<string>(), touch = width < 600;
-  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', viewport: { width, height }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: touch, isMobile: touch, deviceScaleFactor: touch ? 2 : 1 }); const page = await context.newPage();
+  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', reducedMotion: 'reduce', viewport: { width, height }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: touch, isMobile: touch, deviceScaleFactor: touch ? 2 : 1 }); const page = await context.newPage();
   const click = async (selector: string) => { const node = page.locator(selector); if (touch) await node.tap(); else await node.click(); };
   const shot = async (name: string) => { await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForFunction(() => !document.querySelector('.app-header')?.classList.contains('compact')); return page.screenshot({ path: `tests/screenshots/design/after/${name}-${width}-${info.project.name}.png`, fullPage: true }); };
   try {

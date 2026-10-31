@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clean, parseAmount, shiftDate, suggestion, today } from '../../../shared/logic';
 import type { Bootstrap, ExpenseInput } from '../../../shared/types';
-import { animate, duration, reducedMotion } from '../motion';
+import { animate, duration, reducedMotion, token } from '../motion';
 import Icon from './Icon';
 import NameInput from './NameInput';
 export interface Draft { amount: string; name: string; source: string; ts?: number }
@@ -10,6 +10,7 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
   const [amount, setAmount] = useState(draft.amount), [name, setName] = useState(draft.name);
   const [category, setCategory] = useState(suggestion(draft.name, data.history).category);
   const [date, setDate] = useState(today(data.tz)), [comment, setComment] = useState(''), [error, setError] = useState('');
+  useEffect(() => { if (error) animate(form.current?.querySelector('.amount-card') || null, [{ transform: 'translateX(0)' }, { transform: `translateX(-${token('motion-error')})` }, { transform: `translateX(${token('motion-error')})` }, { transform: 'translateX(0)' }]); }, [error]);
   const [dateMode, setDateMode] = useState<'today' | 'yesterday' | 'custom'>('today');
   useEffect(() => {
     const update = () => { if (dateMode !== 'custom') setDate(shiftDate(today(data.tz), dateMode === 'today' ? 0 : -1)); };
@@ -47,7 +48,7 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
     } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось сохранить'); }
     finally { lock.current = false; setBusy(false); }
   }
-  return <section ref={form} className="add-screen" aria-label="Новый расход">
+  return <section ref={form} className="add-screen" data-invalid={!!error} aria-label="Новый расход">
     <h1>Новый расход</h1>
     {source !== 'manual' && <div className="payment-note">Из платежа · {source} <span>Проверьте и сохраните</span></div>}
     <div className="amount-card"><label htmlFor="amount">Сколько потратили?</label><div className="amount-line"><input id="amount" aria-label="Сумма" value={amount || '0'} readOnly inputMode="none"/><span>{data.currency}</span></div><div className="amount-caption">{amount.includes('+') ? `Итого: ${money(total)}` : 'В тенге. Название можно не указывать.'}</div></div>

@@ -1,0 +1,50 @@
+{
+  "cpu": 4,
+  "viewport": "412x915",
+  "results": [
+    {
+      "name": "navigation",
+      "longTasks": [
+        164
+      ],
+      "cls": 0,
+      "inputLayoutShift": 0,
+      "frameP95": 33.30000000000018,
+      "frameMax": 233.39999999999986
+    },
+    {
+      "name": "sheet-open",
+      "longTasks": [
+        174
+      ],
+      "cls": 0,
+      "inputLayoutShift": 0,
+      "frameP95": 16.800000000000182,
+      "frameMax": 166.60000000000036
+    },
+    {
+      "name": "sheet-close",
+      "longTasks": [],
+      "cls": 0,
+      "inputLayoutShift": 0,
+      "frameP95": 16.799999999999727,
+      "frameMax": 50
+    },
+    {
+      "name": "week-month",
+      "longTasks": [],
+      "cls": 0,
+      "inputLayoutShift": 0.04609909359818772,
+      "frameP95": 16.800000000000182,
+      "frameMax": 49.899999999999636
+    },
+    {
+      "name": "ring-selection",
+      "longTasks": [],
+      "cls": 0,
+      "inputLayoutShift": 0.0003612229794626087,
+      "frameP95": 16.799999999999272,
+      "frameMax": 50
+    }
+  ]
+}

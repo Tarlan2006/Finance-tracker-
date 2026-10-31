@@ -6,12 +6,14 @@ import { useAppearance } from '../lib/appearance';
 import { useVisualViewport } from '../lib/viewport';
 import { useDialog } from '../lib/dialog';
 import { useDismissGesture } from '../lib/gestures';
-import { exitSnapshot, transitionScreen, useEnter, useMotionLifecycle } from '../motion';
+import { exitSnapshot, finishScreenTransition, transitionScreen, useEnter, useMotionLifecycle } from '../motion';
+import Presence from '../motion/Presence';
 import Add, { type Draft } from './Add';
 import Expenses from './Expenses';
 import Overview from './Overview';
 import More from './More';
 import Icon, { type IconName } from './Icon';
+const currencyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const tabs: { name: string; icon: IconName }[] = [{ name: 'Траты', icon: 'expenses' }, { name: 'Обзор', icon: 'overview' }, { name: 'Ещё', icon: 'more' }];
 function readDraft(): Draft & { open: boolean } { const p = new URLSearchParams(location.search), open = p.has('amount') || p.has('merchant'); const draft = { amount: p.get('amount') || '', name: p.get('merchant') || '', source: p.get('src') || 'manual', ts: p.has('ts') ? Number(p.get('ts')) * 1000 : undefined, open }; if (open) history.replaceState({ tab: 0, add: true }, '', location.pathname); return draft; }
 const initialDraft = readDraft();
@@ -24,7 +26,7 @@ export default function App() {
   const [quiet, setQuiet] = useState(false);
   const [compact, setCompact] = useState(false), [logoutPrompt, setLogoutPrompt] = useState(false);
   const dialog = useRef<HTMLDivElement>(null), addDialog = useRef<HTMLDivElement>(null), previousKey = useRef(key);
-  const money = useCallback((n: number) => `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n)} ₸`, []);
+  const money = useCallback((n: number) => `${currencyFormat.format(n)} ₸`, []);
   const cancelDialog = useCallback(() => { exitSnapshot(dialog.current); duplicate?.resolve(false); setDuplicate(null); setLogoutPrompt(false); }, [duplicate, setDuplicate]);
   useDialog(dialog, !!duplicate || logoutPrompt, cancelDialog);
   const closeAdd = useCallback(() => { exitSnapshot(addDialog.current); setAddOpen(false); history.replaceState({ tab: history.state?.tab || 0 }, '', location.pathname); }, []);
@@ -36,14 +38,14 @@ export default function App() {
   useEffect(() => { let last = window.scrollY; const back = (event: PopStateEvent) => { setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => { const y = window.scrollY; setCompact(y > 64); if (Math.abs(y - last) > 8) { setQuiet(y > 120 && y > last); last = y; } }; window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
   useEffect(() => { if (previousKey.current && !key) { setDraft({ amount: '', name: '', source: 'manual' }); setAddOpen(false); setLogoutPrompt(false); setTab(0); setFilter(null); history.replaceState({ tab: 0 }, '', location.pathname); } previousKey.current = key; }, [key]);
   useEffect(() => { if (key && data && tab === 0) void finance.loadMonths([month]); }, [key, !!data, tab, month, finance.loadMonths]);
-  function navigate(next: number) { if (next === tab && !addOpen) return; transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); setAddOpen(false); setQuiet(false); window.scrollTo({ top: 0 }); }, Math.sign(next - tab)); }
-  function openAdd() { history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
+  function navigate(next: number, search = false) { transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); setQuiet(false); if (search) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); window.scrollTo({ top: 0 }); }, Math.sign(next - tab)); }
+  function openAdd() { finishScreenTransition(); history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (!key || !data || event.ctrlKey || event.metaKey || event.altKey || target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || addOpen || duplicate || logoutPrompt || document.querySelector('.modal-backdrop [role="dialog"]')) return;
       if (event.key.toLowerCase() === 'n' || event.key.toLowerCase() === 'т') { event.preventDefault(); openAdd(); }
-      if (event.key === '/') { event.preventDefault(); navigate(0); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); }
+      if (event.key === '/') { event.preventDefault(); navigate(0, true); }
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { const direction = event.key === 'ArrowLeft' ? 'Предыдущий' : 'Следующий', unit = tab === 1 ? 'период' : 'месяц'; const button = document.querySelector<HTMLButtonElement>(`[aria-label="${direction} ${unit}"]`); if (button && !button.disabled) { event.preventDefault(); button.click(); } }
     };
     document.addEventListener('keydown', shortcuts); return () => document.removeEventListener('keydown', shortcuts);
@@ -64,7 +66,7 @@ export default function App() {
   </div>
     {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
     {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2 data-drag-handle>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Для восстановления понадобится прежний код доступа. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={cancelDialog}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
-    {toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}
+    <Presence>{toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}</Presence>
     {!!finance.deletions.length && <div className="undo-stack">{finance.deletions.map(e => <div key={e.row}><span>Удаляем: {displayName(e)}</span><button onClick={event => { exitSnapshot(event.currentTarget.parentElement); finance.undo(e); }}>Отменить</button></div>)}</div>}
     {duplicate && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Похоже на дубль" className="modal"><h2 data-drag-handle>Похоже на дубль</h2><p>{displayName(duplicate.expense)} · {money(duplicate.expense.amount)}</p><p>Такая трата уже есть. Всё равно сохранить?</p><button className="primary" onClick={() => { exitSnapshot(dialog.current); duplicate.resolve(true); setDuplicate(null); }}>Всё равно сохранить</button><button onClick={cancelDialog}>Отмена</button></div></div>}
   </div>;

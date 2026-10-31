@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { navigate } from './navigation';
 test('desktop sidebar, master-detail, shortcuts, dialog and page zoom', async ({ browser }, info) => {
-  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', viewport: { width: 1440, height: 900 }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: false, isMobile: false });
+  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', reducedMotion: 'reduce', viewport: { width: 1440, height: 900 }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: false, isMobile: false });
   const page = await context.newPage();
   try {
     await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key')); await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible();

@@ -6,7 +6,12 @@ const query = () => matchMedia('(prefers-reduced-motion: reduce)');
 export const reducedMotion = () => query().matches || document.hidden;
 const subscribe = (fn: () => void) => { const media = query(); media.addEventListener('change', fn); return () => media.removeEventListener('change', fn); };
 export const usePrefersReducedMotion = () => useSyncExternalStore(subscribe, () => query().matches, () => true);
-export function token(name: string) { return getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim(); }
+const tokens = new Map<string, string>();
+export function token(name: string) {
+  let value = tokens.get(name);
+  if (value === undefined) { value = getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim(); tokens.set(name, value); }
+  return value;
+}
 export const duration = (name = 'dur-base') => parseFloat(token(name)) || 0;
 const active = new Map<Element, Animation>();
 export function animate(node: Element | null, frames: Keyframe[], options: KeyframeAnimationOptions = {}) {
@@ -27,12 +32,17 @@ export function useMotionLifecycle() {
   }, []);
 }
 let transition: ViewTransition | undefined;
+let navigationRevision = 0;
+export function finishScreenTransition() { transition?.skipTransition(); }
 export function transitionScreen(update: () => void, direction = 1) {
+  const revision = ++navigationRevision;
   transition?.skipTransition();
   document.documentElement.style.setProperty('--motion-direction', String(direction || 1));
   if (!document.startViewTransition || reducedMotion()) { flushSync(update); animate(document.querySelector('.main-content'), [{ opacity: 0 }, { opacity: 1 }]); return; }
-  transition = document.startViewTransition(() => flushSync(update));
-  void transition.finished.catch(() => {}).finally(() => { transition = undefined; });
+  const current = document.startViewTransition(() => { if (revision === navigationRevision) flushSync(update); }); transition = current;
+  // Skipping rejects ready, even though finished resolves. Handle both promises.
+  void current.ready.catch(() => {});
+  void current.finished.catch(() => {}).finally(() => { if (transition === current) transition = undefined; });
 }
 // Exit pixels are inert, aria-hidden and detached from layout. Data/focus updates
 // happen immediately; no action waits for the decorative animation to finish.
@@ -44,17 +54,17 @@ export function exitSnapshot(node: HTMLElement | null, collapse = false) {
   clone.setAttribute('aria-hidden', 'true'); clone.inert = true; clone.dataset.motionGhost = '';
   Object.assign(clone.style, { position: 'fixed', margin: '0', inset: 'auto', left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, transform: 'none', pointerEvents: 'none', zIndex: '90', transformOrigin: 'top center' });
   document.body.append(clone);
-  const a = animate(clone, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: collapse ? 'scaleY(.05)' : `translateY(${token('motion-distance')}) scale(.98)` }], { duration: duration('dur-exit') });
+  const a = animate(clone, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: collapse ? 'scaleY(.05)' : `translateY(${token('motion-distance')}) scale(${token('dialog-scale')})` }], { duration: duration('dur-exit') });
   void a?.finished.then(() => clone.remove(), () => clone.remove());
 }
 export function useEnter(ref: RefObject<HTMLElement | null>, visible: unknown, kind: 'sheet' | 'fade' = 'fade') {
   useLayoutEffect(() => {
     const node = ref.current; if (!node || !visible) return;
-    const base = getComputedStyle(node).transform;
-    const transform = base === 'none' ? '' : base;
     const desktop = matchMedia('(min-width:1024px)').matches;
-    const from = kind === 'sheet' && !desktop ? `translateY(${token('motion-sheet')})` : 'scale(.98)';
-    const a = animate(node, [{ opacity: 0, transform: `${transform} ${from}` }, { opacity: 1, transform: base }], { duration: duration('dur-slow'), easing: token('spring') });
+    const from = kind === 'sheet' && !desktop ? `translateY(${token('motion-sheet')})` : `scale(${token('dialog-scale')})`;
+    // Add to the desktop's CSS centering transform without a synchronous layout
+    // read of a previously hidden sheet.
+    const a = animate(node, [{ transform: from }, { transform: 'none' }], { composite: 'add', duration: duration('dur-slow'), easing: token('spring') });
     return () => a?.cancel();
   }, [ref, visible, kind]);
 }
@@ -63,6 +73,12 @@ export function useFlip(ref: RefObject<HTMLElement | null>, key: unknown, select
   useLayoutEffect(() => {
     const next = new Map<string, { box: DOMRect; node: HTMLElement }>();
     const nodes = [...(ref.current?.querySelectorAll<HTMLElement>(selector) || [])];
+    if (!cascade && !previous.current.size) {
+      // Chart bars already grow with CSS; don't also animate/measure 31 parents.
+      nodes.forEach(node => next.set(node.dataset.motionKey!, { box: new DOMRect(), node })); previous.current = next;
+      return () => { next.forEach(item => { if (item.node.isConnected) item.box = item.node.getBoundingClientRect(); }); };
+    }
+    nodes.forEach(node => active.get(node)?.cancel());
     // Batch geometry reads before any animation writes.
     nodes.forEach(node => next.set(node.dataset.motionKey!, { box: node.getBoundingClientRect(), node }));
     next.forEach(({ box, node }, id) => {
@@ -72,17 +88,21 @@ export function useFlip(ref: RefObject<HTMLElement | null>, key: unknown, select
         if (Math.abs(x) + Math.abs(y) > 1) animate(node, [{ transform: `translate(${x}px,${y}px)` }, { transform: 'none' }]);
       } else if (!cascade || nodes.indexOf(node) < 10) {
         animate(node, [{ opacity: 0, transform: `translateY(${token('motion-distance')})` }, { opacity: 1, transform: 'none' }], { delay: previous.current.size ? 0 : stagger(nodes.indexOf(node), duration('dur-stagger')), fill: 'backwards' });
-        if (previous.current.size) { node.classList.remove('motion-new'); void node.offsetWidth; node.classList.add('motion-new'); }
+        if (cascade && previous.current.size && !reducedMotion()) {
+          node.classList.add('motion-new');
+          node.addEventListener('animationend', () => node.classList.remove('motion-new'), { once: true });
+        }
       }
     });
     previous.current = next;
+    return () => { next.forEach(item => { if (item.node.isConnected) item.box = item.node.getBoundingClientRect(); }); };
   }, [ref, key, selector, cascade]);
 }
 export function useNumber(ref: RefObject<HTMLElement | null>, value: number, format: (n: number) => string) {
   const state = useRef<ReturnType<typeof counter> | null>(null), latest = useRef(value);
   const reduce = usePrefersReducedMotion();
   useLayoutEffect(() => {
-    state.current = counter(latest.current, { now: () => performance.now(), request: requestAnimationFrame, cancel: cancelAnimationFrame }, n => { if (ref.current) ref.current.textContent = format(n); });
+    state.current = counter(latest.current, { now: () => performance.now(), request: fn => requestAnimationFrame(fn), cancel: id => cancelAnimationFrame(id) }, n => { if (ref.current) ref.current.textContent = format(n); });
     return () => state.current?.stop();
   }, [ref, format]);
   useLayoutEffect(() => { latest.current = value; state.current?.to(value, reduce || document.hidden ? 0 : duration('dur-counter')); }, [value, reduce, format]);

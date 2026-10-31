@@ -1,8 +1,10 @@
 /* Only compositor properties move. Color transitions are reserved for hover/theme. */
 button{transition:transform var(--dur-press) var(--ease-out),opacity var(--dur-press),background-color var(--dur-fast),color var(--dur-fast)}
-button:active:not(:disabled){transform:scale(.97);opacity:.86}
+button:active:not(:disabled){transform:scale(var(--press-scale));opacity:.86}
 @media(hover:hover){button:not(:disabled):hover{filter:none}}
 .main-content{view-transition-name:screen}
+:root{view-transition-name:none}
+.main-content:has(.modal-backdrop){position:relative;z-index:60}
 ::view-transition-group(screen){animation:none}
 ::view-transition-old(screen){animation:screen-out var(--dur-exit) var(--ease-out) both}
 ::view-transition-new(screen){animation:screen-in var(--dur-base) var(--ease-out) both}
@@ -22,8 +24,8 @@ button:active:not(:disabled){transform:scale(.97);opacity:.86}
 .add-button .icon{transition:transform var(--dur-slow) var(--spring)}
 .app-shell:has(.add-backdrop:not([hidden])) .add-button .icon{transform:rotate(45deg)}
 .main-content,.app-header{transition:scale var(--dur-slow) var(--ease-out)}
-@media(max-width:1023px){.app-shell:has(.add-backdrop:not([hidden])) .main-content{scale:.985}}
-.add-backdrop:not([hidden]),.modal-backdrop{animation:motion-fade var(--dur-base) var(--ease-out)}
+@media(max-width:1023px){.app-shell:has(.add-backdrop:not([hidden])) .main-content{scale:var(--background-scale)}}
+.modal-backdrop{animation:motion-fade var(--dur-base) var(--ease-out)}
 .modal{animation:none}
 [data-drag-handle]{touch-action:pan-x}
 .motion-edge{position:absolute;left:0;top:64px;bottom:0;width:12px;z-index:9;touch-action:pan-y}
@@ -39,10 +41,12 @@ button:active:not(:disabled){transform:scale(.97);opacity:.86}
 .name-options li{animation:motion-rise var(--dur-exit) var(--ease-out) both;animation-delay:calc(var(--item-index,0)*var(--dur-stagger))}
 .save{position:relative}.save-label{font-size:inherit!important}.save-check{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;opacity:0}
 .save.success .save-label,.save.success>.icon{opacity:0}.save.success .save-check{opacity:1;animation:motion-fade var(--dur-fast)}
+.save.success{opacity:1}
 .save-label,.save>.icon{transition:opacity var(--dur-fast)}
 .error{animation:motion-shake var(--dur-base) var(--ease-out)}
-@keyframes motion-shake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
-.motion-new::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--accent);animation:highlight var(--dur-highlight) var(--ease-out) forwards}
+.add-screen[data-invalid="true"] .amount-card{outline:1px solid var(--danger)}
+@keyframes motion-shake{20%,60%{transform:translateX(calc(-1*var(--motion-error)))}40%,80%{transform:translateX(var(--motion-error))}}
+.motion-new::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--accent);opacity:0;animation:highlight var(--dur-highlight) var(--ease-out)}
 @keyframes highlight{from{opacity:.16}to{opacity:0}}
 .progress i{width:100%;transform-origin:left;transition:transform var(--dur-base) var(--ease-out)}
 .day-group>.label-row{position:sticky;top:64px;z-index:2;isolation:isolate;padding-block:var(--space-2)}
@@ -51,16 +55,22 @@ button:active:not(:disabled){transform:scale(.97);opacity:.86}
 .queue-card{position:relative}.queue-card p,.connection i{animation:motion-fade var(--dur-base)}
 .segmented::before{transition:transform var(--dur-base) var(--ease-out)}
 .bar-button rect{transform-origin:16px 148px;transition:transform var(--dur-base) var(--ease-out)}
+.bar-button rect{animation:bar-grow var(--dur-base) var(--ease-out) backwards;animation-delay:calc(var(--bar-index)*var(--dur-bar-stagger))}
+@keyframes bar-grow{from{transform:scaleY(0)}}
 .bar-label,.chart-heading h2,.donut-center>span,.donut-center>small{animation:motion-fade var(--dur-base)}
 .donut-segment{transition:opacity var(--dur-base),transform var(--dur-base) var(--ease-out)}
+.legend-row{padding-inline:var(--space-2)}
 .ring-reveal{animation:ring-draw var(--dur-ring) var(--ease-out) both}
 @keyframes ring-draw{from{stroke-dashoffset:610}to{stroke-dashoffset:0}}
 .expense-preview{animation:motion-reveal var(--dur-base) var(--ease-out)}
 .empty,.loading-state{animation:motion-fade var(--dur-base)}
-.skeleton{animation:skeleton-breathe 1800ms var(--ease-in-out) infinite alternate}
+.skeleton{animation:skeleton-breathe var(--dur-skeleton) var(--ease-in-out) infinite alternate}
 @keyframes skeleton-breathe{from{opacity:.55}to{opacity:1}}
-:root.theme-changing,:root.theme-changing body,:root.theme-changing .panel,:root.theme-changing .app-header{transition:background-color 200ms,color 200ms}
+:root.theme-changing,:root.theme-changing body,:root.theme-changing .panel,:root.theme-changing .app-header{transition:background-color var(--dur-theme),color var(--dur-theme)}
 :root[data-motion-paused="true"] *,:root[data-motion-paused="true"] *::after{animation-play-state:paused!important}
 @media(min-width:1024px){.nav-indicator{inset:0 0 auto;width:100%;height:48px;border-radius:var(--radius-inner);transform:translateY(calc(var(--active-tab)*56px))}.navigation.quiet{opacity:1;scale:1}.day-group>.label-row{top:72px}}
+@media(min-width:1024px){.add-backdrop:not([hidden]) .add-dialog,.modal{animation:motion-fade var(--dur-slow) var(--ease-out)}}
 @media(min-width:600px) and (max-width:1023px) and (max-height:500px){.nav-indicator{inset:0 0 auto;width:100%;height:62px;transform:translateY(calc(var(--active-tab)*74px))}.navigation.quiet{opacity:1;scale:1}}
+@media(min-width:1024px){.bottom-nav{display:grid;grid-template-columns:1fr;grid-auto-rows:1fr}.nav-indicator{height:calc((100% - 16px)/3);transform:translateY(calc(var(--active-tab)*(100% + 8px)))}}
+@media(min-width:600px) and (max-width:1023px) and (max-height:500px){.bottom-nav{display:grid;grid-template-columns:1fr;grid-auto-rows:1fr}.nav-indicator{height:calc((100% - 24px)/3);transform:translateY(calc(var(--active-tab)*(100% + 12px)))}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}button:active:not(:disabled){transform:none}.navigation.quiet{scale:1}.app-shell:has(.add-backdrop:not([hidden])) .main-content{scale:1}.category::after{transform:none}::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}

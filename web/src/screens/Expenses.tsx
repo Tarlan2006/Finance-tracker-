@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { dateLabel } from '../../../shared/dates';
+import { dateLabel } from '../lib/format';
 import { useDialog } from '../lib/dialog';
 import { displayName, parseAmount, sum, shiftDate } from '../../../shared/logic';
 import { budgetStatus, categoryEmoji, categoryTitle, colorIndex, inPeriod, remainingPerDay, type JournalFilter } from '../../../shared/analytics';
@@ -21,7 +21,7 @@ export default function Expenses({ expenses: history, categories, queue, money, 
   const dialog = useRef<HTMLFormElement>(null);
   const desktop = useMedia('(min-width: 1024px)');
   const close = useCallback(() => { exitSnapshot(dialog.current); setEditing(null); }, []);
-  useEnter(dialog, editing?.row ?? (editing ? 'queue' : null), 'sheet');
+  useEnter(dialog, editing ? editing.row || 'queue' : null, 'sheet');
   useDialog(dialog, !!editing && !desktop, close);
   useDismissGesture(dialog, !!editing && !desktop, close);
   const [queueUndo, setQueueUndo] = useState<Queued[]>([]), queueTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
