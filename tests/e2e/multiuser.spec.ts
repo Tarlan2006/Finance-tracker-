@@ -61,3 +61,21 @@ test('payment link leaves recovery actions available when bootstrap fails', asyn
   await page.getByRole('button',{name:'Выйти',exact:true}).click();
   await expect(page.getByRole('button',{name:'Войти',exact:true})).toBeVisible();
 });
+
+test('relinking a sheet leaves an offline expense visible without sending it to the new journal', async ({page}) => {
+  const fixtureApi = await fixture(page);
+  await page.goto('/?amount=123&merchant=Старая%20покупка');
+  await login(page);
+  await page.route('**/api/expenses', route => route.abort());
+  await page.getByRole('button', {name:'🍔 Продукты и супермаркеты',exact:true}).click();
+  await page.getByRole('button', {name:/^Сохранить ·/}).click();
+  await page.getByRole('button', {name:'Закрыть добавление'}).click();
+  await expect(page.getByText('Старая покупка · 123 ₸')).toBeVisible();
+  expect((await fixtureApi.call('admin/set-sheet', {login:'tarlan',sheet:'fictional-relinked-account-sheet'})).status).toBe(200);
+  await page.unroute('**/api/expenses');
+  await page.reload();
+  await expect(page.getByRole('button', {name:'Войти',exact:true})).toBeVisible();
+  await login(page);
+  await expect(page.getByText(/Ошибка: Таблица была заменена/)).toBeVisible();
+  expect([...fixtureApi.actors.values()].every(actor => actor.mock.writes.length === 0)).toBe(true);
+});
