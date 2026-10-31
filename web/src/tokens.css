@@ -8,7 +8,11 @@
   --font-xs:.75rem; --font-sm:.875rem; --font-body:1rem; --font-heading:1.25rem; --font-value:1.75rem; --font-title:2.125rem;
   --page:var(--space-4); --section:var(--space-6); --control:44px; --row:64px; --nav-height:64px; --fab:56px;
   --phone-max:520px; --tablet-max:720px; --desktop-max:1100px; --dialog-max:480px; --sidebar:200px;
-  --duration:180ms; --viewport-bottom:0px; --viewport-top:0px; --viewport-height:100dvh;
+  --dur-press:70ms; --dur-fast:120ms; --dur-exit:180ms; --dur-base:240ms; --dur-slow:320ms;
+  --dur-counter:400ms; --dur-ring:560ms; --dur-highlight:1000ms; --dur-stagger:20ms; --dur-bar-stagger:8ms; --dur-undo:5000ms;
+  --ease-out:cubic-bezier(.2,.75,.2,1); --ease-in-out:cubic-bezier(.4,0,.2,1); --spring:cubic-bezier(.2,.8,.3,1.02);
+  --motion-distance:10px; --motion-sheet:16px; --motion-direction:1; --duration:var(--dur-base);
+  --viewport-bottom:0px; --viewport-top:0px; --viewport-height:100dvh;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",system-ui,"Segoe UI",Roboto,sans-serif;
   font-size:16px; line-height:1.45; font-weight:400; font-synthesis:none; text-rendering:optimizeLegibility;
 }

@@ -1,0 +1,66 @@
+/* Only compositor properties move. Color transitions are reserved for hover/theme. */
+button{transition:transform var(--dur-press) var(--ease-out),opacity var(--dur-press),background-color var(--dur-fast),color var(--dur-fast)}
+button:active:not(:disabled){transform:scale(.97);opacity:.86}
+@media(hover:hover){button:not(:disabled):hover{filter:none}}
+.main-content{view-transition-name:screen}
+::view-transition-group(screen){animation:none}
+::view-transition-old(screen){animation:screen-out var(--dur-exit) var(--ease-out) both}
+::view-transition-new(screen){animation:screen-in var(--dur-base) var(--ease-out) both}
+::view-transition-old(root),::view-transition-new(root){animation:none}
+::view-transition{pointer-events:none}
+@keyframes screen-in{from{opacity:0;transform:translateX(calc(var(--motion-direction)*var(--motion-distance)))}to{opacity:1;transform:none}}
+@keyframes screen-out{to{opacity:0;transform:translateX(calc(var(--motion-direction)*var(--motion-distance)*-1))}}
+@keyframes motion-fade{from{opacity:0}to{opacity:1}}
+@keyframes motion-rise{from{opacity:0;translate:0 var(--motion-distance)}to{opacity:1;translate:0 0}}
+@keyframes motion-reveal{from{opacity:0;clip-path:inset(0 0 100%)}to{opacity:1;clip-path:inset(0)}}
+.bottom-nav{position:relative;isolation:isolate}
+.nav-indicator{position:absolute;z-index:-1;inset:4px auto 4px 4px;width:calc((100% - 8px)/3);border-radius:var(--pill);background:var(--raised);transform:translateX(calc(var(--active-tab)*100%));transition:transform var(--dur-base) var(--ease-out);pointer-events:none}
+.bottom-nav button[aria-current]{background:transparent}
+.navigation{transition:opacity var(--dur-base),scale var(--dur-base) var(--ease-out);transform-origin:bottom center}
+.navigation.quiet{opacity:.72;scale:.96}
+.navigation:focus-within,.navigation:hover{opacity:1;scale:1}
+.add-button .icon{transition:transform var(--dur-slow) var(--spring)}
+.app-shell:has(.add-backdrop:not([hidden])) .add-button .icon{transform:rotate(45deg)}
+.main-content,.app-header{transition:scale var(--dur-slow) var(--ease-out)}
+@media(max-width:1023px){.app-shell:has(.add-backdrop:not([hidden])) .main-content{scale:.985}}
+.add-backdrop:not([hidden]),.modal-backdrop{animation:motion-fade var(--dur-base) var(--ease-out)}
+.modal{animation:none}
+[data-drag-handle]{touch-action:pan-x}
+.motion-edge{position:absolute;left:0;top:64px;bottom:0;width:12px;z-index:9;touch-action:pan-y}
+.detail-panel{animation:screen-in var(--dur-base) var(--ease-out)}
+.toast,.undo-stack>div{animation:motion-rise var(--dur-base) var(--ease-out)}
+.undo-stack>div{position:relative;overflow:hidden}
+.undo-stack>div::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--accent);transform-origin:left;animation:undo-time var(--dur-undo) linear forwards}
+@keyframes undo-time{to{transform:scaleX(0)}}
+.category{position:relative}
+.category::after{content:"✓";position:absolute;top:4px;right:6px;font-size:var(--font-xs);opacity:0;transform:scale(.8);transition:opacity var(--dur-fast),transform var(--dur-base) var(--ease-out)}
+.category.selected::after{opacity:1;transform:scale(1)}
+.name-options{animation:motion-reveal var(--dur-exit) var(--ease-out)}
+.name-options li{animation:motion-rise var(--dur-exit) var(--ease-out) both;animation-delay:calc(var(--item-index,0)*var(--dur-stagger))}
+.save{position:relative}.save-label{font-size:inherit!important}.save-check{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;opacity:0}
+.save.success .save-label,.save.success>.icon{opacity:0}.save.success .save-check{opacity:1;animation:motion-fade var(--dur-fast)}
+.save-label,.save>.icon{transition:opacity var(--dur-fast)}
+.error{animation:motion-shake var(--dur-base) var(--ease-out)}
+@keyframes motion-shake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
+.motion-new::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--accent);animation:highlight var(--dur-highlight) var(--ease-out) forwards}
+@keyframes highlight{from{opacity:.16}to{opacity:0}}
+.progress i{width:100%;transform-origin:left;transition:transform var(--dur-base) var(--ease-out)}
+.day-group>.label-row{position:sticky;top:64px;z-index:2;isolation:isolate;padding-block:var(--space-2)}
+.day-group>.label-row::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--material);backdrop-filter:blur(16px);border-radius:var(--radius-inner);opacity:0;transition:opacity var(--dur-base)}
+.app-shell:has(.app-header.compact) .day-group>.label-row::before{opacity:1}
+.queue-card{position:relative}.queue-card p,.connection i{animation:motion-fade var(--dur-base)}
+.segmented::before{transition:transform var(--dur-base) var(--ease-out)}
+.bar-button rect{transform-origin:16px 148px;transition:transform var(--dur-base) var(--ease-out)}
+.bar-label,.chart-heading h2,.donut-center>span,.donut-center>small{animation:motion-fade var(--dur-base)}
+.donut-segment{transition:opacity var(--dur-base),transform var(--dur-base) var(--ease-out)}
+.ring-reveal{animation:ring-draw var(--dur-ring) var(--ease-out) both}
+@keyframes ring-draw{from{stroke-dashoffset:610}to{stroke-dashoffset:0}}
+.expense-preview{animation:motion-reveal var(--dur-base) var(--ease-out)}
+.empty,.loading-state{animation:motion-fade var(--dur-base)}
+.skeleton{animation:skeleton-breathe 1800ms var(--ease-in-out) infinite alternate}
+@keyframes skeleton-breathe{from{opacity:.55}to{opacity:1}}
+:root.theme-changing,:root.theme-changing body,:root.theme-changing .panel,:root.theme-changing .app-header{transition:background-color 200ms,color 200ms}
+:root[data-motion-paused="true"] *,:root[data-motion-paused="true"] *::after{animation-play-state:paused!important}
+@media(min-width:1024px){.nav-indicator{inset:0 0 auto;width:100%;height:48px;border-radius:var(--radius-inner);transform:translateY(calc(var(--active-tab)*56px))}.navigation.quiet{opacity:1;scale:1}.day-group>.label-row{top:72px}}
+@media(min-width:600px) and (max-width:1023px) and (max-height:500px){.nav-indicator{inset:0 0 auto;width:100%;height:62px;transform:translateY(calc(var(--active-tab)*74px))}.navigation.quiet{opacity:1;scale:1}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}button:active:not(:disabled){transform:none}.navigation.quiet{scale:1}.app-shell:has(.add-backdrop:not([hidden])) .main-content{scale:1}.category::after{transform:none}::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
