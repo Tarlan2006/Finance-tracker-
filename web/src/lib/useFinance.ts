@@ -52,7 +52,8 @@ export function useFinance() {
       const next = Date.now() + retryDelay(readFailures.current++, e.retryAfter);
       readNotBefore.current = Date.now() + e.retryAfter * 1000;
       setBootstrapRetry(next);
-      setError(syncText(classifyFailure(e, navigator.onLine)) + ' · следующая попытка в ' + new Date(next).toLocaleTimeString('ru-RU'));
+      const reason = e.code === 'sheets_quota' ? syncText(classifyFailure(e, navigator.onLine)) : e.message;
+      setError(reason + ' · следующая попытка в ' + new Date(next).toLocaleTimeString('ru-RU'));
       return;
     } showError(e); } }
   }, [key, owner, showError, expireSession, cacheKey]);

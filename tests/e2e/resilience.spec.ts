@@ -16,11 +16,16 @@ test('pending logout seals queue atomically and restores only with original key'
 });
 test('lost response after server commit retries same ID exactly once across two tabs', async ({ page, context, request }) => {
   await login(page); let id = ''; let committed = false;
+  const sentIds: string[] = [];
+  context.on('request', r => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/expenses') sentIds.push(r.postDataJSON().id);
+  });
   await page.route('**/api/expenses', async r => { id = r.request().postDataJSON().id; const response = await r.fetch(); expect(response.status()).toBe(201); committed = true; await r.abort(); });
   await record(page); await expect.poll(() => committed).toBe(true); await page.unroute('**/api/expenses');
   const other = await context.newPage(); await other.goto('/');
-  await navigate(page, 'Траты'); await page.getByRole('button', { name: 'Повторить', exact: true }).click();
+  // Opening the other tab resumes the delayed entry without a button race.
   await expect.poll(async () => (await storage(page))[0].length).toBe(0);
+  expect(sentIds).toEqual([id, id]);
   const b = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json(); expect(b.history.filter((e: { id: string }) => e.id === id)).toHaveLength(1);
 });
 test('200 queued records survive a closed tab and drain without duplicates', async ({ page, context, request }) => {
