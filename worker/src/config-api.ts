@@ -1,6 +1,6 @@
 import { categoryLabel, changeItem, configEmoji, configName, importCategories, importItems, limitAmount, uniqueCategory } from '../../shared/config';
 import { AppError, parseAmount, today, validMonth } from '../../shared/logic';
-import type { Config, ConfigCategory, ConfigItem } from '../../shared/types';
+import type { Config, ConfigCategory, ConfigItem, Snapshot } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, MemoryOperations, moveIdentity, categoryRow, configConflict, decodeConfig, headers, itemRow, planRows, type ConfigPlan, type OperationStorage } from './config-store';
 const stamp = () => `${today('Asia/Almaty')}T${new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date())}+05:00`;
@@ -8,10 +8,10 @@ interface Receipt { signature: string; chunks: number; done: boolean; count: num
 export class ConfigApi {
   private cache?: { until: number; value: Config };
   constructor(private adapter: SheetsAdapter, private operations: OperationStorage = new MemoryOperations()) {}
-  async read(fresh = false): Promise<Config> {
+  async read(fresh = false, loadLegacy: () => Promise<Snapshot> = () => this.adapter.read()): Promise<Config> {
     if (!fresh && this.cache && this.cache.until > Date.now()) return this.cache.value;
     const value = decodeConfig(await this.adapter.readConfigTables());
-    if (!value.configured) { const legacy = await this.adapter.read(), articles = await this.adapter.readLegacyItems(); value.categories = importCategories(legacy.categories, ''); value.items = importItems(articles.income, articles.fixed, ''); }
+    if (!value.configured) { const legacy = await loadLegacy(), articles = await this.adapter.readLegacyItems(); value.categories = importCategories(legacy.categories, ''); value.items = importItems(articles.income, articles.fixed, ''); }
     this.cache = { until: Date.now() + 300000, value }; return value;
   }
   async setup() {

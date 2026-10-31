@@ -33,7 +33,12 @@ export class Api {
     } catch (e) { return errorResponse(e); }
   }
   private async snapshot() {
-    const config = await this.config.read(), s = await this.adapter.read(!config.configured);
+    let imported: Snapshot | undefined;
+    const config = await this.config.read(false, async () => {
+      imported = await this.adapter.read();
+      return imported;
+    });
+    const s = imported ?? await this.adapter.read(!config.configured);
     if (config.configured) s.categories = configCategories(config.categories).filter(c => !c.archived);
     if (this.env.NATIVE_TABLE === '1' && EXPENSE_HEADERS.some((h, i) => s.rows[0]?.[i] !== h)) throw new AppError(409, 'schema', 'Заголовки журнала изменились. Проверьте порядок столбцов.');
     if (s.rows[0]?.[6] !== 'ID' || s.rows[0]?.[7] !== 'Источник') throw new AppError(422, 'headers', 'Добавь столбцы G и H: G1 = ID, H1 = Источник');

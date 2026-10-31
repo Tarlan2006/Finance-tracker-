@@ -61,3 +61,11 @@ it('reconciles a lost create response and refuses to clear a replacement a secon
   expect((await req('expenses/'+expense.row,'DELETE',{fp:expense.fp})).status).toBe(409);
   expect(mock.rows[expense.row - 1][1]).toBe('External');
 });
+
+it('reads the legacy journal once on cold bootstrap', async () => {
+  let reads = 0;
+  const original = mock.read.bind(mock);
+  mock.read = async () => { reads++; return original(); };
+  expect((await req('bootstrap')).status).toBe(200);
+  expect(reads).toBe(1);
+});
