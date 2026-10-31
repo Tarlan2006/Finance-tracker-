@@ -22,8 +22,9 @@ it('dry rename writes nothing; stale rev returns 409; C-only change preserves al
   const c = await setup(), cat = c.categories[0], before = structuredClone(mock.rows), writes = mock.configWrites.length;
   const body = { operationId: op(), rev: cat.rev, emoji: '🍎', name: 'Питание' };
   const count = before.filter(r => r[2] === categoryLabel(cat)).length;
-  expect(await (await req(`config/categories/${cat.id}?dry=1`, body)).json()).toEqual({ count }); expect(mock.configWrites).toHaveLength(writes);
-  const response = await req(`config/categories/${cat.id}`, body); expect(response.status).toBe(200);
+  const preview = await (await req(`config/categories/${cat.id}?dry=1`, body)).json();
+  expect(preview).toEqual({ count, previewHash: expect.stringMatching(/^[a-f0-9]{64}$/) }); expect(mock.configWrites).toHaveLength(writes);
+  const response = await req(`config/categories/${cat.id}`, {...body, previewHash:preview.previewHash}); expect(response.status).toBe(200);
   expect(mock.rows.map(r => r.filter((_, i) => i !== 2))).toEqual(before.map(r => r.filter((_, i) => i !== 2))); expect(mock.rows.filter(r => r[2] === '🍎 Питание')).toHaveLength(count);
   expect((await req(`config/categories/${cat.id}`, { ...body, operationId: op() })).status).toBe(409);
   expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(mock.configWrites).toHaveLength(writes + 1);
@@ -60,3 +61,14 @@ it('duplicate category, emoji and capacity errors never modify sheets', async ()
 it('reorders exactly one position, increments affected revs and preserves category identity', async () => { const c = await setup(), cat = c.categories[0]; const result = await req(`config/categories/${cat.id}`, { operationId: op(), rev: 1, move: 1 }); const next: Config = (await result.json()).config; expect(next.categories.slice().sort((a, b) => a.sort - b.sort).slice(0, 3).map(c => c.id)).toEqual([c.categories[1].id, cat.id, c.categories[2].id]); expect(next.categories[0].rev).toBe(2); expect(next.categories[1].rev).toBe(2); });
 it('full 1005-row rename chunks durable values and safely retries a lost response', async () => { const c = await setup(), cat = c.categories[0]; for (let i = 1; i < mock.rows.length; i++) mock.rows[i][2] = categoryLabel(cat); const sizes: number[] = [], put = operations.put.bind(operations); operations.put = async (key, value) => { sizes.push(new TextEncoder().encode(JSON.stringify(value)).length); return put(key, value); }; const apply = mock.applyConfig.bind(mock); mock.applyConfig = async plan => { await apply(plan); throw new Error('lost response'); }; const body = { operationId: op(), rev: 1, name: 'Питание' }; expect((await req(`config/categories/${cat.id}`, body)).status).toBe(503); mock.applyConfig = apply; api = new Api(env, mock, operations); expect((await req(`config/categories/${cat.id}`, body)).status).toBe(200); expect(Math.max(...sizes)).toBeLessThan(128 * 1024); expect(mock.rows.slice(1).every(r => r[2] === '🍔 Питание')).toBe(true); expect(mock.rows[1][5]).toContain('ARRAYFORMULA'); });
 it('rejects dry setup and mixed reorder/rename without any writes', async () => { expect((await req('config/setup?dry=1', {})).status).toBe(422); expect(mock.createdSheets).toEqual([]); const c = await setup(), before = structuredClone(mock.rows), n = mock.configWrites.length; expect((await req(`config/categories/${c.categories[0].id}`, { operationId: op(), rev: 1, move: 1, name: 'Новое имя' })).status).toBe(422); expect(mock.configWrites).toHaveLength(n); expect(mock.rows).toEqual(before); });
+
+it('refuses a different expense occupying a previewed row', async () => {
+  const config = await setup(), category = config.categories[0];
+  const path = 'config/categories/' + category.id;
+  const body = {operationId: op(), rev:category.rev, name:'Новое имя'};
+  const preview = await (await req(path+'?dry=1', body)).json();
+  mock.rows[1][6] = 'different-expense';
+  const writes = mock.configWrites.length;
+  expect((await req(path,{...body,previewHash:preview.previewHash})).status).toBe(409);
+  expect(mock.configWrites).toHaveLength(writes);
+});

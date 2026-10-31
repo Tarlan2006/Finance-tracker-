@@ -8,18 +8,20 @@ import { useDialog } from '../lib/dialog';
 import Icon from './Icon';
 const money = (n: number) => `${n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₸`;
 const emojis = ['🍔', '☕', '🚗', '🎁', '💊', '🛍️', '🎬', '📚', '🏠', '✈️', '🐾', '🏃', '🎮', '💻', '📱', '🎵', '🌿', '🧾', '🛠️', '💰', '👕', '🚌', '🍎', '⭐'];
-export interface SettingsActions { changeConfig: (path: string, body: Record<string, unknown>) => Promise<{ config?: Config; count?: number }>; removeItem: (item: ConfigItem, month: string) => void }
+export interface SettingsActions { changeConfig: (path: string, body: Record<string, unknown>) => Promise<{ config?: Config; count?: number; previewHash?: string }>; removeItem: (item: ConfigItem, month: string) => void }
 type Editor = { type: 'setup' | 'item' | 'remove' | 'category' | 'archive'; category?: ConfigCategory; item?: ConfigItem; operationId: string };
 export default function Settings({ data, back, changeConfig, removeItem }: { data: Bootstrap; back: () => void } & SettingsActions) {
   const [month, setMonth] = useState(today(data.tz).slice(0, 7)), [editor, setEditor] = useState<Editor | null>(null);
   const [name, setName] = useState(''), [amount, setAmount] = useState(''), [emoji, setEmoji] = useState(''), [kind, setKind] = useState('income'), [start, setStart] = useState(month), [scope, setScope] = useState('forward'), [target, setTarget] = useState('');
   const [count, setCount] = useState<number | null>(null), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [archive, setArchive] = useState(false);
+  const previewHash = useRef('');
   const dialog = useRef<HTMLFormElement>(null), lock = useRef(false);
   const close = useCallback(() => { if (!lock.current) { setEditor(null); setError(''); } }, []);
   useDialog(dialog, !!editor, close);
   const config = data.config, items = activeItems(config?.items || [], month), categories = (config?.categories || []).slice().sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id));
   function open(type: Editor['type'], value?: ConfigCategory | ConfigItem) {
     const category = value && 'emoji' in value ? value : undefined, item = value && 'kind' in value ? value : undefined;
+    previewHash.current = '';
     setEditor({ type, category, item, operationId: crypto.randomUUID() }); setName(value?.name || ''); setAmount(String(category?.limit || item?.amount || '')); setEmoji(category?.emoji || ''); setKind(item?.kind || 'income'); setStart(month); setScope('forward'); setTarget(''); setCount(null); setConfirmed(false); setError('');
   }
   async function action(work: () => Promise<unknown>) { if (lock.current) return; lock.current = true; setBusy(true); setError(''); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось сохранить'); } finally { lock.current = false; setBusy(false); } }
@@ -34,8 +36,16 @@ export default function Settings({ data, back, changeConfig, removeItem }: { dat
       else {
         Object.assign(body, editor.type === 'archive' ? { rev: editor.category!.rev, archived: true, ...(target ? { targetId: target } : {}) } : { name, emoji, limit: amount, ...(editor.category ? { rev: editor.category.rev } : {}) });
         const renaming = editor.category && (name !== editor.category.name || emoji !== editor.category.emoji);
-        if (!confirmed && (editor.type === 'archive' || renaming)) { const preview = await changeConfig(`${path}?dry=1`, body); setCount(preview.count || 0); setConfirmed(true); return; }
+        if (!confirmed && (editor.type === 'archive' || renaming)) {
+          const preview = await changeConfig(`${path}?dry=1`, body);
+          if (!preview.previewHash) throw new Error('Обновите приложение и повторите предпросмотр');
+          previewHash.current = preview.previewHash;
+          setCount(preview.count || 0);
+          setConfirmed(true);
+          return;
+        }
       }
+      if (confirmed) body.previewHash = previewHash.current;
       await changeConfig(path, body); setEditor(null);
     });
   }

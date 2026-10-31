@@ -1,4 +1,5 @@
 import { categoryLabel, changeItem, configEmoji, configName, importCategories, importItems, limitAmount, uniqueCategory } from '../../shared/config';
+import { digest } from './passwords';
 import { AppError, parseAmount, today, validMonth } from '../../shared/logic';
 import type { Config, ConfigCategory, ConfigItem, Snapshot } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
@@ -30,7 +31,7 @@ export class ConfigApi {
   async mutate(path: string, b: Record<string, unknown>, dry: boolean) {
     const operationId = String(b.operationId || '');
     if (!dry && !/^[a-zA-Z0-9-]{8,100}$/.test(operationId)) throw new AppError(422, 'operation', 'Для изменения нужен уникальный ID операции');
-    const signature = JSON.stringify([path, Object.entries(b).filter(([k]) => k !== 'operationId').sort(([a], [c]) => a.localeCompare(c))]);
+    const signature = JSON.stringify([path, Object.entries(b).filter(([k]) => k !== 'operationId' && k !== 'previewHash').sort(([a], [c]) => a.localeCompare(c))]);
     const key = `config-operation:${operationId}`;
     const saved = dry ? undefined : await this.operations.get<Receipt>(key);
     this.cache = undefined;
@@ -45,6 +46,8 @@ export class ConfigApi {
     const match = path.match(/^\/api\/config\/(categories|items)(?:\/([a-zA-Z0-9@-]+))?$/);
     if (!match) throw new AppError(404, 'route', 'Маршрут не найден');
     const [, group, id] = match;
+    let previewHash: string | undefined;
+    let previewCount = 0;
     if (group === 'categories') {
       if ('move' in b && Object.keys(b).some(k => !['operationId', 'rev', 'move'].includes(k))) throw new AppError(422, 'sort', 'Меняйте порядок отдельно от названия и архива');
       const old = id ? config.categories.find(c => c.id === id) : undefined;
@@ -58,9 +61,13 @@ export class ConfigApi {
       uniqueCategory(category.name, config.categories, category.id);
       let target = categoryLabel(category);
       if (b.targetId) { const destination = config.categories.find(c => c.id === b.targetId && !c.archived && c.id !== id); if (!old || !destination || !category.archived) throw new AppError(422, 'target', 'Выберите активную категорию для переноса'); target = categoryLabel(destination); }
-      if (old && (target !== categoryLabel(old) || dry)) {
+      if (old && (target !== categoryLabel(old) || dry || b.previewHash !== undefined)) {
         const snapshot = await this.adapter.read(false);
-        plan.moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target, identity: moveIdentity(row) }] : []);
+        const moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target, identity: moveIdentity(row) }] : []);
+        previewCount = moves.length;
+        previewHash = await digest(JSON.stringify([old.id, old.rev, target, moves]));
+        if (!dry && b.previewHash !== undefined && b.previewHash !== previewHash) throw configConflict();
+        if (target !== categoryLabel(old)) plan.moves = moves;
       }
       if ('move' in b) {
         if (!old || old.archived || ![-1, 1].includes(Number(b.move))) throw new AppError(422, 'sort', 'Нельзя переместить категорию');
@@ -84,7 +91,7 @@ export class ConfigApi {
       }
       planRows(tables, ITEM_SHEET, changes.map(itemRow), plan);
     }
-    if (dry) return { count: plan.moves.length };
+    if (dry) return { count: previewCount, previewHash };
     // Durable Object values are limited to 128 KiB. A full journal rename needs chunks.
     const chunks = Math.max(1, Math.ceil(Math.max(plan.writes.length, plan.moves.length) / 50));
     for (let i = 0; i < chunks; i++) await this.operations.put(`${key}:${i}`, { writes: plan.writes.slice(i * 50, (i + 1) * 50), moves: plan.moves.slice(i * 50, (i + 1) * 50) });

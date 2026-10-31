@@ -86,11 +86,11 @@ export function useFinance() {
     await enqueue(e, owner); if (session.current !== key) return false; setQueue(await allQueued(owner)); notify(navigator.onLine ? 'Сохранено · отправляется в таблицу' : 'Сохранено в очередь'); void sync(); return true;
   }
   async function edit(e: Expense, patch: Partial<Expense>) { await api(`expenses/${e.row}`, key, { method: 'PATCH', body: JSON.stringify({ ...patch, fp: e.fp }) }); await reload(); notify('Изменения сохранены'); }
-  async function changeConfig(path: string, body: Record<string, unknown>): Promise<{ config?: Config; count?: number }> {
+  async function changeConfig(path: string, body: Record<string, unknown>): Promise<{ config?: Config; count?: number; previewHash?: string }> {
     if (session.current !== key) throw new Error('Войдите заново');
-    const result = await api<Config | { config?: Config; count?: number }>(path, key, { method: 'POST', body: JSON.stringify(body) });
+    const result = await api<Config | { config?: Config; count?: number; previewHash?: string }>(path, key, { method: 'POST', body: JSON.stringify(body) });
     if (session.current !== key) throw new Error('Сеанс завершён');
-    if (path.includes('dry=1')) return result as { count: number };
+    if (path.includes('dry=1')) return result as { count: number; previewHash?: string };
     const config = 'configured' in result ? result : result.config;
     if (config) setData(current => current ? { ...current, config, categories: configCategories(config.categories).filter(c => !c.archived) } : current);
     await reload(); notify('Настройки сохранены'); return { config };
