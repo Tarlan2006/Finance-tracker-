@@ -1,5 +1,9 @@
 # Скопируйте в .dev.vars только при настройке реального подключения.
-SHEET_ID="<<ID_ТАБЛИЦЫ>>"
-GOOGLE_SERVICE_ACCOUNT_JSON='<<JSON_СЕРВИСНОГО_АККАУНТА_В_ОДНУ_СТРОКУ>>'
-APP_KEY="<<СЛУЧАЙНЫЙ_КОД_ДОСТУПА>>"
+SHEET_ID=
+GOOGLE_SERVICE_ACCOUNT_JSON=
+APP_KEY=
+ADMIN_TOKEN=
+WORKER_URL=
+VERIFY_LOGIN=
+VERIFY_PASSWORD=
 # npm run dev всегда использует mock; dev:live использует эти секреты.
