@@ -1,7 +1,9 @@
 import type { ExpenseInput } from '../../../shared/types';
 import { ApiError, readJson } from './http';
-export interface Queued { id: string; owner: string; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; attempts: number; nextAt: number; created: number }
-interface Config { id: 'config'; key: string; owner: string }
+import type { AccountSession } from '../../../shared/accounts';
+export interface Queued { id: string; owner: string; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; attempts: number; nextAt: number; created: number }
+const restored = (row: Queued, owner = row.owner): Queued => ({ ...row, owner, nextAt: 0, ...([401, 403].includes(row.errorStatus || 0) || /Сеанс завершён|Неверный код доступа/.test(row.error || '') ? { status: 'queued' as const, error: undefined, errorStatus: undefined } : {}) });
+interface Config { id: 'config'; key: string; owner: string; encryptionKey?: string; accountId?: string }
 interface Sealed { id: string; iv: number[]; data: number[] }
 async function cipher(key: string) { return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)), 'AES-GCM', false, ['encrypt', 'decrypt']); }
 function db(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const r = indexedDB.open('tenge-finance-v1', 1); r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta', { keyPath: 'id' }); }; r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); }
@@ -12,7 +14,7 @@ async function transaction<T>(store: string, mode: IDBTransactionMode, run: (s: 
 export const allQueued = (owner: string) => transaction<Queued[]>('queue', 'readonly', s => s.getAll()).then(rows => rows.filter(r => r.owner === owner).sort((a, b) => a.created - b.created || a.id.localeCompare(b.id)));
 export const putQueued = (row: Queued) => transaction('queue', 'readwrite', s => s.put(row));
 export const removeQueued = (id: string) => transaction('queue', 'readwrite', s => s.delete(id));
-export async function setQueueKey(key: string, stillActive: () => boolean = () => true): Promise<string> {
+export async function setQueueKey(key: string, stillActive: () => boolean = () => true, account?: AccountSession, legacyPassword?: string): Promise<string> {
   return withQueueLock(() => withSessionLock(async () => {
     if (!stillActive()) return '';
     const old = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
@@ -21,21 +23,36 @@ export async function setQueueKey(key: string, stillActive: () => boolean = () =
       let sealed: Sealed | undefined;
       if (rows.length) {
         const iv = crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cipher(old.key), new TextEncoder().encode(JSON.stringify(rows)));
+        const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cipher(old.encryptionKey || old.key), new TextEncoder().encode(JSON.stringify(rows)));
         sealed = { id: `sealed:${old.owner}`, iv: [...iv], data: [...new Uint8Array(encrypted)] };
       }
       await atomic((meta, queue) => { if (sealed) meta.put(sealed); rows.forEach(row => queue.delete(row.id)); meta.delete('config'); });
     }
     if (!key) { await transaction('meta', 'readwrite', s => s.delete('config')); return ''; }
     const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-    const owner = [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, '0')).join('');
+    const owner = account ? `account:${account.account.id}` : [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, '0')).join('');
+    const encryptionKey = account?.queueKey || key;
+    const config: Config = { id: 'config', key, owner, ...(account ? { encryptionKey, accountId: account.account.id } : {}) };
+    // Legacy credentials never become sessions. Only authenticated tarlan can claim their queue.
+    if (account?.account.id === 'tarlan') {
+      const candidates = new Set([legacyPassword, old && !old.accountId ? old.key : undefined].filter((x): x is string => !!x));
+      for (const previous of candidates) {
+        const previousHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(previous)))].map(n => n.toString(16).padStart(2, '0')).join('');
+        const legacy = await transaction<Sealed | undefined>('meta', 'readonly', s => s.get(`sealed:${previousHash}`));
+        const rows = await allQueued(previousHash);
+        if (legacy) { const clear = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(legacy.iv) }, await cipher(previous), new Uint8Array(legacy.data)); rows.push(...JSON.parse(new TextDecoder().decode(clear)) as Queued[]); }
+        await atomic((meta, queue) => { rows.forEach(row => queue.put(restored(row, owner))); if (legacy) meta.delete(legacy.id); });
+      }
+      const unowned = await transaction<Queued[]>('queue', 'readonly', s => s.getAll());
+      await atomic((_meta, queue) => unowned.filter(r => !r.owner).forEach(row => queue.put(restored(row, owner))));
+    }
     const sealed = await transaction<Sealed | undefined>('meta', 'readonly', s => s.get(`sealed:${owner}`));
     if (sealed) {
-      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(sealed.iv) }, await cipher(key), new Uint8Array(sealed.data));
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(sealed.iv) }, await cipher(encryptionKey), new Uint8Array(sealed.data));
       const rows = JSON.parse(new TextDecoder().decode(decrypted)) as Queued[];
-      await atomic((meta, queue) => { rows.forEach(row => queue.put(row)); meta.delete(sealed.id); meta.put({ id: 'config', key, owner }); });
+      await atomic((meta, queue) => { rows.forEach(row => queue.put(restored(row))); meta.delete(sealed.id); meta.put(config); });
     }
-    await transaction('meta', 'readwrite', s => s.put({ id: 'config', key, owner }));
+    await transaction('meta', 'readwrite', s => s.put(config));
     return owner;
   }));
 }
@@ -91,7 +108,7 @@ async function drain() {
       await removeQueued(item.id); changed = true;
     } catch (error) {
       if (error instanceof ApiError && !error.retryable) {
-        await putQueued({ ...item, status: 'error', error: error.message });
+        await putQueued({ ...item, status: 'error', error: error.message, errorStatus: error.status });
         if (error.status === 401 || error.status === 403) break;
         continue;
       }
