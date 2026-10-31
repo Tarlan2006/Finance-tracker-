@@ -15,20 +15,22 @@ export function budget(data: Pick<Bootstrap, 'config' | 'summaries'>, rows: Expe
   return { income, fixed, personal, balance, percent, hasIncome: income > 0, daily: month === day.slice(0, 7) && balance > 0 && income > 0 ? balance / (monthDays(month) - Number(day.slice(8)) + 1) : null };
 }
 export function configName(value: unknown, max = 40) {
+  if (typeof value !== 'string') throw new AppError(422, 'name', 'Введите название текстом');
   const name = clean(value).normalize('NFC');
   if (!name || [...name].length > max || /^[=+\-@]/.test(name)) throw new AppError(422, 'name', `Название: от 1 до ${max} символов, без формульного префикса`);
   return name;
 }
 export function configEmoji(value: unknown) {
+  if (value !== undefined && value !== null && typeof value !== 'string') throw new AppError(422, 'emoji', 'Укажите одно эмодзи');
   const emoji = clean(value);
   if (!emoji) return '';
-  if ([...new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(emoji)].length !== 1 || !/[\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(emoji)) throw new AppError(422, 'emoji', 'Укажите одно эмодзи');
+  if ([...new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(emoji)].length !== 1 || !/[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(emoji)) throw new AppError(422, 'emoji', 'Укажите одно эмодзи');
   return emoji;
 }
 export function uniqueCategory(name: string, categories: ConfigCategory[], id = '') {
   if (categories.some(c => c.id !== id && c.name.toLocaleLowerCase('ru') === name.toLocaleLowerCase('ru'))) throw new AppError(422, 'duplicate_name', 'Категория с таким названием уже существует');
 }
-export const limitAmount = (value: unknown) => value === '' || value === null || value === undefined || value === 0 || value === '0' ? 0 : parseAmount(value);
+export const limitAmount = (value: unknown) => value === null || value === undefined || typeof value === 'string' && !value.trim() || /^(?:0+)(?:[.,]0{1,2})?$/.test(String(value).trim()) ? 0 : parseAmount(value);
 export function importCategories(categories: Category[], stamp: string): ConfigCategory[] {
   return categories.map((c, sort) => { const first = c.name.split(' ')[0]; let emoji = ''; try { emoji = configEmoji(first); } catch { /* Plain names are valid legacy categories. */ } return { id: `legacy-category-${sort}`, emoji, name: emoji ? c.name.slice(first.length).trim() : c.name, limit: c.limit, archived: false, sort, rev: 1, updated_at: stamp }; });
 }

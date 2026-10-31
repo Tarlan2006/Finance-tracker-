@@ -55,7 +55,7 @@ export class Api {
   private async route(request: Request): Promise<Response> {
     const url = new URL(request.url), path = url.pathname, method = request.method;
     if (path === '/api/config' && method === 'GET') return json(await this.config.read());
-    if (path === '/api/config/setup' && method === 'POST') return json(await this.config.setup());
+    if (path === '/api/config/setup' && method === 'POST') { if (url.searchParams.has('dry')) throw new AppError(422, 'dry', 'Предпросмотр доступен только для категорий'); return json(await this.config.setup()); }
     if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));
     const known = ['/api/bootstrap', '/api/expenses', '/api/quick', '/api/export.csv'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
     if (!known) throw new AppError(404, 'not_found', 'Маршрут не найден');
@@ -64,7 +64,7 @@ export class Api {
     const expenses = history.filter(e => e.date.startsWith(month));
     if (method === 'GET' && path === '/api/bootstrap') return json({ categories: s.categories, config: await this.config.read(), expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });
     if (method === 'GET' && path === '/api/expenses') return json({ expenses });
-    if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="expenses-${month}.csv"`, 'Cache-Control': 'no-store' } });
+    if (method === 'GET' && path === '/api/export.csv') return new Response(csv(expenses), { headers: { ...securityHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="finance-tracker-${month}.csv"`, 'Cache-Control': 'no-store' } });
     if (method === 'POST' && path === '/api/expenses') { const result = await this.create(await this.body(request), s); return json(result, result.duplicate ? 200 : 201); }
     if (method === 'POST' && path === '/api/quick') {
       const b = await this.body(request), amount = parseAmount(b.amount), name = clean(b.merchant);
@@ -84,7 +84,9 @@ export class Api {
       const current = history.find(e => e.row === row);
       if (!current || !fp || current.fp !== fp) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите список и повторите');
       if (method === 'DELETE') { await this.adapter.clear(row); return json({ ok: true }); }
-      const changed = validateExpense({ ...current, ...b, id: current.id || `${Date.now()}-${crypto.randomUUID()}` }, s.categories, this.env.TZ);
+      const allowed = [...s.categories];
+      if (current.category && (!('category' in b) || b.category === current.category) && (await this.config.read()).categories.some(c => c.archived && `${c.emoji} ${c.name}`.trim() === current.category)) allowed.push({ name: current.category, limit: 0 });
+      const changed = validateExpense({ ...current, ...b, id: current.id || `${Date.now()}-${crypto.randomUUID()}` }, allowed, this.env.TZ);
       await this.adapter.write(row, changed);
       return json({ expense: { ...changed, row, fp: fingerprint(changed) } satisfies Expense });
     }

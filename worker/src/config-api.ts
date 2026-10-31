@@ -4,7 +4,7 @@ import type { Config, ConfigCategory, ConfigItem } from '../../shared/types';
 import type { SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, MemoryOperations, categoryRow, configConflict, decodeConfig, headers, itemRow, planRows, type ConfigPlan, type OperationStorage } from './config-store';
 const stamp = () => `${today('Asia/Almaty')}T${new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date())}+05:00`;
-interface Receipt { signature: string; plan: ConfigPlan; done: boolean; count: number }
+interface Receipt { signature: string; chunks: number; done: boolean; count: number }
 export class ConfigApi {
   private cache?: { until: number; value: Config };
   constructor(private adapter: SheetsAdapter, private operations: OperationStorage = new MemoryOperations()) {}
@@ -36,7 +36,7 @@ export class ConfigApi {
     this.cache = undefined;
     if (saved) {
       if (saved.signature !== signature) throw configConflict();
-      if (!saved.done) { await this.adapter.applyConfig(saved.plan); await this.operations.put(key, { ...saved, done: true }); }
+      if (!saved.done) { const plan: ConfigPlan = { writes: [], moves: [] }; for (let i = 0; i < saved.chunks; i++) { const chunk = await this.operations.get<ConfigPlan>(`${key}:${i}`); if (!chunk) throw new AppError(503, 'operation', 'Повторите операцию позже'); plan.writes.push(...chunk.writes); plan.moves.push(...chunk.moves); } await this.adapter.applyConfig(plan); await this.operations.put(key, { ...saved, done: true }); }
       return { config: await this.read(true), count: saved.count };
     }
     const tables = await this.adapter.readConfigTables(), config = decodeConfig(tables), time = stamp();
@@ -46,6 +46,7 @@ export class ConfigApi {
     if (!match) throw new AppError(404, 'route', 'Маршрут не найден');
     const [, group, id] = match;
     if (group === 'categories') {
+      if ('move' in b && Object.keys(b).some(k => !['operationId', 'rev', 'move'].includes(k))) throw new AppError(422, 'sort', 'Меняйте порядок отдельно от названия и архива');
       const old = id ? config.categories.find(c => c.id === id) : undefined;
       if (id && (!old || old.rev !== b.rev)) throw configConflict();
       const category: ConfigCategory = old ? { ...old, rev: old.rev + 1, updated_at: time } : { id: crypto.randomUUID(), name: '', emoji: '', limit: 0, archived: false, sort: Math.max(-1, ...config.categories.map(c => c.sort)) + 1, rev: 1, updated_at: time };
@@ -61,7 +62,13 @@ export class ConfigApi {
         const snapshot = await this.adapter.read(false);
         plan.moves = snapshot.rows.flatMap((row, i) => i > 0 && row[2] === categoryLabel(old) ? [{ row: i + 1, from: categoryLabel(old), to: target }] : []);
       }
-      planRows(tables, CATEGORY_SHEET, [categoryRow(category)], plan);
+      if ('move' in b) {
+        if (!old || old.archived || ![-1, 1].includes(Number(b.move))) throw new AppError(422, 'sort', 'Нельзя переместить категорию');
+        const ordered = config.categories.filter(c => !c.archived).sort((a, c) => a.sort - c.sort || a.id.localeCompare(c.id)), index = ordered.findIndex(c => c.id === old.id), next = index + Number(b.move);
+        if (!ordered[next]) throw new AppError(422, 'sort', 'Категория уже на краю списка');
+        [ordered[index], ordered[next]] = [ordered[next], ordered[index]];
+        planRows(tables, CATEGORY_SHEET, ordered.flatMap((c, sort) => c.sort === sort ? [] : [categoryRow({ ...c, sort, rev: c.rev + 1, updated_at: time })]), plan);
+      } else planRows(tables, CATEGORY_SHEET, [categoryRow(category)], plan);
     } else {
       if (dry) throw new AppError(422, 'dry', 'Предпросмотр доступен для категорий');
       const month = validMonth(String(b.month || ''));
@@ -78,7 +85,10 @@ export class ConfigApi {
       planRows(tables, ITEM_SHEET, changes.map(itemRow), plan);
     }
     if (dry) return { count: plan.moves.length };
-    const receipt: Receipt = { signature, plan, done: false, count: plan.moves.length };
+    // Durable Object values are limited to 128 KiB. A full journal rename needs chunks.
+    const chunks = Math.max(1, Math.ceil(Math.max(plan.writes.length, plan.moves.length) / 50));
+    for (let i = 0; i < chunks; i++) await this.operations.put(`${key}:${i}`, { writes: plan.writes.slice(i * 50, (i + 1) * 50), moves: plan.moves.slice(i * 50, (i + 1) * 50) });
+    const receipt: Receipt = { signature, chunks, done: false, count: plan.moves.length };
     await this.operations.put(key, receipt);
     try { await this.adapter.applyConfig(plan); await this.operations.put(key, { ...receipt, done: true }); } finally { this.cache = undefined; }
     return { config: await this.read(true), count: plan.moves.length };
