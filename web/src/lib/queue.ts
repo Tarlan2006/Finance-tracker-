@@ -1,9 +1,9 @@
 import type { ExpenseInput } from '../../../shared/types';
 import { ApiError, readJson } from './http';
 import type { AccountSession } from '../../../shared/accounts';
-export interface Queued { id: string; owner: string; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; attempts: number; nextAt: number; created: number }
+export interface Queued { id: string; owner: string; sheetVersion?: number; expense: ExpenseInput; status: 'queued' | 'error'; error?: string; errorStatus?: number; attempts: number; nextAt: number; created: number }
 const restored = (row: Queued, owner = row.owner): Queued => ({ ...row, owner, nextAt: 0, ...([401, 403].includes(row.errorStatus || 0) || /Сеанс завершён|Неверный код доступа/.test(row.error || '') ? { status: 'queued' as const, error: undefined, errorStatus: undefined } : {}) });
-interface Config { id: 'config'; key: string; owner: string; encryptionKey?: string; accountId?: string }
+interface Config { id: 'config'; key: string; owner: string; encryptionKey?: string; accountId?: string; sheetVersion?: number }
 interface Sealed { id: string; iv: number[]; data: number[] }
 async function cipher(key: string) { return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)), 'AES-GCM', false, ['encrypt', 'decrypt']); }
 function db(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const r = indexedDB.open('tenge-finance-v1', 1); r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta', { keyPath: 'id' }); }; r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); }
@@ -32,7 +32,7 @@ export async function setQueueKey(key: string, stillActive: () => boolean = () =
     const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
     const owner = account ? `account:${account.account.id}` : [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, '0')).join('');
     const encryptionKey = account?.queueKey || key;
-    const config: Config = { id: 'config', key, owner, ...(account ? { encryptionKey, accountId: account.account.id } : {}) };
+    const config: Config = { id: 'config', key, owner, ...(account ? { encryptionKey, accountId: account.account.id, sheetVersion: account.account.sheetVersion || 1 } : {}) };
     // Legacy credentials never become sessions. Only authenticated tarlan can claim their queue.
     if (account?.account.id === 'tarlan') {
       const candidates = new Set([legacyPassword, old && !old.accountId ? old.key : undefined].filter((x): x is string => !!x));
@@ -64,7 +64,7 @@ export async function enqueue(expense: ExpenseInput, owner: string) {
     const config = tx.objectStore('meta').get('config');
     config.onsuccess = () => {
       if (config.result?.owner !== owner) { tx.abort(); return; }
-      tx.objectStore('queue').put({ id: expense.id, expense, owner, status: 'queued', attempts: 0, nextAt: 0, created: Date.now() });
+      tx.objectStore('queue').put({ id: expense.id, expense, owner, sheetVersion: config.result.sheetVersion || 1, status: 'queued', attempts: 0, nextAt: 0, created: Date.now() });
     };
     tx.oncomplete = () => { database.close(); resolve(); };
     tx.onabort = tx.onerror = () => { database.close(); reject(new Error('Не удалось записать очередь. Проверьте хранилище и войдите снова')); };
@@ -101,7 +101,7 @@ async function drain() {
     const current = await transaction<Config | undefined>('meta', 'readonly', s => s.get('config'));
     if (current?.owner !== config.owner) break;
     try {
-      const r = await fetch('/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-App-Key': config.key }, body: JSON.stringify(item.expense), signal: AbortSignal.timeout(20000) });
+      const r = await fetch('/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-App-Key': config.key, 'X-FT-Sheet-Version': String(item.sheetVersion || 1) }, body: JSON.stringify(item.expense), signal: AbortSignal.timeout(20000) });
       const data = await readJson(r);
       const saved = data.expense as Partial<ExpenseInput> | undefined;
       if (saved?.id !== item.id) throw new ApiError(502, 'Сервер не подтвердил запись. Повторяем с тем же ID', true);

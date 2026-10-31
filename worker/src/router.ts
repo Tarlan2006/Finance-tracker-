@@ -7,7 +7,7 @@ import type { SheetsAdapter } from './sheets';
 import { securityHeaders } from './headers';
 import { ConfigApi } from './config-api';
 import { configCategories } from '../../shared/config';
-import type { OperationStorage } from './config-store';
+import { MemoryOperations, type OperationStorage } from './config-store';
 import { EXPENSE_HEADERS, type TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
@@ -15,7 +15,7 @@ export class Api {
   private auth: Auth;
   private tail: Promise<unknown> = Promise.resolve();
   private config: ConfigApi;
-  constructor(private env: Env, private adapter: SheetsAdapter, operations?: OperationStorage, private preparation?: TablePreparation) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
+  constructor(private env: Env, private adapter: SheetsAdapter, private operations: OperationStorage = new MemoryOperations(), private preparation?: TablePreparation) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
   fetch(request: Request): Promise<Response> { return this.handle(request, false); }
   // Only SheetCoordinator calls this after AccountsDO resolved the session.
   fetchAccount(request: Request): Promise<Response> { return this.handle(request, true); }
@@ -47,7 +47,15 @@ export class Api {
   private async create(body: unknown, s: Snapshot, allowPending = false) {
     const id = body && typeof body === 'object' ? clean((body as Record<string, unknown>).id) : '';
     const existing = id ? expensesFromRows(s.rows).find(x => x.id === id) : undefined;
-    if (existing) return { expense: existing, duplicate: true };
+    if (existing) {
+      const incoming = body as Partial<ExpenseInput>;
+      const matches = incoming.amount === existing.amount && clean(incoming.name) === existing.name
+        && (clean(incoming.source) || 'manual') === existing.source && clean(incoming.comment) === existing.comment
+        && (allowPending || (clean(incoming.date) === existing.date && clean(incoming.category) === existing.category));
+      if (!matches) throw new AppError(409, 'id_conflict', 'Расход с этим ID уже записан с другими данными. Проверьте журнал.');
+      return { expense: existing, duplicate: true };
+    }
+    if (id && await this.operations.get('deleted-expense:' + id)) throw new AppError(409, 'deleted_expense', 'Эта запись была удалена. Проверьте журнал.');
     if (id && s.rows.some(r => r[6] === id)) throw new AppError(409, 'partial_row', 'Запись с этим ID изменена вручную. Обновите журнал');
     const e = validateExpense(body, s.categories, this.env.TZ, allowPending);
     const row = firstEmptyRow(s.rows);
@@ -93,7 +101,16 @@ export class Api {
       const fp = b.fp || url.searchParams.get('fp');
       const current = history.find(e => e.row === row);
       if (!current || !fp || current.fp !== fp) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите список и повторите');
-      if (method === 'DELETE') { await this.adapter.clear(row); return json({ ok: true }); }
+      if (method === 'DELETE') {
+        // Reserve the ID before clearing. A lost acknowledgement must never resurrect it.
+        if (current.id) await this.operations.put('deleted-expense:' + current.id, true);
+        try { await this.adapter.clear(row); }
+        catch (error) {
+          const latest = (await this.adapter.read(false)).rows[row - 1] || [];
+          if ([0,1,2,3,4,6,7].some(i => latest[i] != null && latest[i] !== '')) throw error;
+        }
+        return json({ ok: true });
+      }
       const allowed = [...s.categories];
       if (current.category && (!('category' in b) || b.category === current.category) && (await this.config.read()).categories.some(c => c.archived && `${c.emoji} ${c.name}`.trim() === current.category)) allowed.push({ name: current.category, limit: 0 });
       const changed = validateExpense({ ...current, ...b, id: current.id || `${Date.now()}-${crypto.randomUUID()}` }, allowed, this.env.TZ);

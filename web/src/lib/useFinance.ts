@@ -19,6 +19,10 @@ export function useFinance() {
   const [itemDeletions, setItemDeletions] = useState<ConfigItem[]>([]), itemTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [duplicate, setDuplicate] = useState<{ expense: ExpenseInput; resolve: (yes: boolean) => void } | null>(null);
   const session = useRef(key), sequence = useRef(0), knownQueue = useRef(queue), toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const cacheKey = useCallback((ownerId: string) => {
+    const version = accountSession?.account.sheetVersion || 1;
+    return version === 1 ? `bootstrap-${ownerId}` : `bootstrap-${ownerId}-v${version}`;
+  }, [accountSession?.account.sheetVersion]);
   const loadedMonths = useRef(new Set<string>()), pendingMonths = useRef(new Map<string, Promise<void>>());
   knownQueue.current = queue;
   const showError = useCallback((e: unknown) => setError(e instanceof Error ? e.message : 'Не удалось выполнить действие. Повторите'), []);
@@ -31,9 +35,9 @@ export function useFinance() {
   const reload = useCallback(async () => {
     if (!key || !owner || session.current !== key) return;
     const request = ++sequence.current;
-    try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; setData(b); setTableState(''); storage.setItem(`bootstrap-${owner}`, JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
-    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await setQueueKey(''); storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(`bootstrap-${owner}`); closeSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(`bootstrap-${owner}`); } showError(e); } }
-  }, [key, owner, showError, closeSession]);
+    try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
+    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await setQueueKey(''); storage.removeItem('app-key'); storage.removeItem('account-session'); storage.removeItem(cacheKey(owner)); closeSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } showError(e); } }
+  }, [key, owner, showError, closeSession, cacheKey]);
   const sync = useCallback(async () => {
     if (!owner || session.current !== key) return;
     try { const displayed = knownQueue.current, before = await allQueued(owner); await flushQueue(); if (session.current !== key) return; const after = await allQueued(owner); setQueue(after); if (navigator.onLine && [...before, ...displayed].some(row => !after.some(item => item.id === row.id))) await reload(); }
@@ -41,9 +45,9 @@ export function useFinance() {
   }, [owner, key, reload, showError]);
   useEffect(() => {
     let active = true; const saved = savedSession(); if (!key || !saved?.queueKey || saved.account.mustChangePassword) return;
-    void (async () => { try { if (storage.getItem('app-key') !== key) return; const id = await setQueueKey(key, () => active && session.current === key && storage.getItem('app-key') === key, saved); if (!active || session.current !== key) return; setOwner(id); const cache = readCachedBootstrap(storage.getItem(`bootstrap-${id}`)); if (cache) setData(cache); const rows = await allQueued(id); if (session.current === key) setQueue(rows); } catch { if (active) setError('Хранилище недоступно. Разрешите сохранение данных сайта'); } })();
+    void (async () => { try { if (storage.getItem('app-key') !== key) return; const id = await setQueueKey(key, () => active && session.current === key && storage.getItem('app-key') === key, saved); if (!active || session.current !== key) return; setOwner(id); const cache = readCachedBootstrap(storage.getItem(cacheKey(id))); if (cache) setData(cache); const rows = await allQueued(id); if (session.current === key) setQueue(rows); } catch { if (active) setError('Хранилище недоступно. Разрешите сохранение данных сайта'); } })();
     return () => { active = false; };
-  }, [key]);
+  }, [key, cacheKey]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
     const network = () => { setOnline(navigator.onLine); if (navigator.onLine) { void sync(); void reload(); } }, message = () => void sync();
@@ -61,11 +65,11 @@ export function useFinance() {
       const promise = api<{ expenses: Expense[] }>(`expenses?month=${month}`, key).then(b => {
         if (session.current !== key || sequence.current !== request) return;
         loadedMonths.current.add(month);
-        setData(current => { if (!current) return current; const next = { ...current, history: [...current.history.filter(e => !e.date.startsWith(month)), ...b.expenses] }; storage.setItem(`bootstrap-${owner}`, JSON.stringify(next)); return next; });
+        setData(current => { if (!current) return current; const next = { ...current, history: [...current.history.filter(e => !e.date.startsWith(month)), ...b.expenses] }; storage.setItem(cacheKey(owner), JSON.stringify(next)); return next; });
       }).catch(e => { if (session.current === key) showError(e); }).finally(() => pendingMonths.current.delete(month));
       pendingMonths.current.set(month, promise); return promise;
     }));
-  }, [key, owner, showError]);
+  }, [key, owner, showError, cacheKey]);
   async function acceptSession(s: AccountSession, previousPassword?: string) {
     // Finish claiming/sealing the queue before publishing the new session to other tabs.
     const id = !s.account.mustChangePassword && s.queueKey ? await setQueueKey(s.token, () => true, s, previousPassword) : await setQueueKey('');

@@ -31,3 +31,11 @@ it('fingerprint detects manual text changes even beyond the display normalizatio
   expect((await req(`expenses/${expense.row}?fp=${encodeURIComponent(expense.fp)}`, 'DELETE')).status).toBe(409);
   expect(mock.writes).toHaveLength(1);
 });
+
+it('rejects changed payloads and retries after deletion', async () => {
+  const body = input(), {expense} = await (await req('expenses','POST',body)).json();
+  expect((await req('expenses','POST',{...body,amount:12})).status).toBe(409);
+  expect((await req('expenses/'+expense.row,'DELETE',{fp:expense.fp})).status).toBe(200);
+  expect((await req('expenses','POST',body)).status).toBe(409);
+  expect(mock.writes).toHaveLength(2);
+});

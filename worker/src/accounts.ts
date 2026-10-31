@@ -4,12 +4,12 @@ import type { Env } from './env';
 import type { OperationStorage } from './config-store';
 import { json, errorResponse } from './router';
 import { constantEqual, digest, hashPassword, randomSecret, validatePassword, verifyPassword, type PasswordHash } from './passwords';
-interface Account extends PasswordHash { id: string; login: string; displayName: string; sheetId: string; queueKey: string; mustChangePassword: boolean; disabled: boolean; createdAt: number; passwordChangedAt: number }
+interface Account extends PasswordHash { id: string; login: string; displayName: string; sheetId: string; sheetVersion?: number; queueKey: string; mustChangePassword: boolean; disabled: boolean; createdAt: number; passwordChangedAt: number }
 interface Session { id: string; hash: string; accountId: string; device: string; createdAt: number; lastUsedAt: number; expiresAt: number }
 interface Failure { count: number; level: number; until: number; touched: number }
 interface State { accounts: Account[]; sessions: Session[]; failures: Record<string, Failure>; rates: Record<string, { count: number; until: number }>; dummy: PasswordHash }
 export const SESSION_LIFE = 180 * 86400000;
-const view = (a: Account): AccountView => ({ id: a.id, login: a.login, displayName: a.displayName, mustChangePassword: a.mustChangePassword, hasSheet: !!a.sheetId });
+const view = (a: Account): AccountView => ({ id: a.id, login: a.login, displayName: a.displayName, mustChangePassword: a.mustChangePassword, hasSheet: !!a.sheetId, sheetVersion: a.sheetVersion || 1 });
 export function parseSheetId(value: unknown) { const s = typeof value === 'string' ? value.trim() : ''; const id = s.startsWith('https://docs.google.com/spreadsheets/d/') ? s.match(/^https:\/\/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)(?:[/?#]|$)/)?.[1] || '' : s; if (!/^[a-zA-Z0-9_-]{20,200}$/.test(id)) throw new AppError(422, 'sheet_id', 'Введите ссылку Google Sheets или корректный ID таблицы'); return id; }
 async function body(request: Request) { if (Number(request.headers.get('Content-Length')) > 4096) throw new AppError(413, 'body', 'Слишком большой запрос'); const text = await request.text(); if (text.length > 4096) throw new AppError(413, 'body', 'Слишком большой запрос'); try { const b = JSON.parse(text); if (!b || typeof b !== 'object' || Array.isArray(b)) throw new Error(); return b as Record<string, unknown>; } catch { throw new AppError(422, 'json', 'Неверный JSON'); } }
 class Limited extends AppError { constructor(readonly retry: number) { super(429, 'rate_limit', `Слишком много попыток. Повторите через ${Math.ceil(retry / 60)} мин.`); } }
@@ -95,6 +95,9 @@ export class AccountsService {
     if (path === '/api/account/sessions' && method === 'GET') return json(s.sessions.filter(x => x.accountId === a.id).map(x => ({ id: x.id, device: x.device, createdAt: x.createdAt, lastUsedAt: x.lastUsedAt, current: x.id === session.id })));
     if (path.startsWith('/api/account/sessions/') && method === 'DELETE') { const id = path.slice('/api/account/sessions/'.length); s.sessions = s.sessions.filter(x => x.accountId !== a.id || x.id !== id); return json({ ok: true }); }
     if (!a.sheetId) throw new AppError(409, 'sheet_unlinked', 'Таблица ещё не подключена. Обратитесь к администратору');
+    if (path === '/api/expenses' && method === 'POST' && (request.headers.get('X-FT-Sheet-Version') || '1') !== String(a.sheetVersion || 1)) {
+      throw new AppError(409, 'sheet_changed', 'Таблица была заменена. Эта трата сохранена для прежней таблицы. Проверьте её и при необходимости создайте новую запись.');
+    }
     return { account: a };
   }
   private async admin(request: Request, s: State, ip: string) {
@@ -115,7 +118,11 @@ export class AccountsService {
     }
     if (!a) throw new AppError(404, 'account_missing', 'Аккаунт не найден');
     if (action === 'set-password') { validatePassword(b.password); Object.assign(a, await hashPassword(b.password), { mustChangePassword: b.mustChange === true, passwordChangedAt: this.now() }); s.sessions = s.sessions.filter(x => x.accountId !== a.id); for (const key of Object.keys(s.failures)) if (key === `login:${login}` || key.endsWith(`:${login}`) || key === `change:${a.id}`) delete s.failures[key]; }
-    else if (action === 'set-sheet') { const id = parseSheetId(b.sheet); if (s.accounts.some(other => other.id !== a!.id && other.sheetId === id)) throw new AppError(409, 'sheet_taken', 'Эта таблица уже принадлежит другому аккаунту'); a.sheetId = id; let email = ''; try { email = JSON.parse(this.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}').client_email || ''; } catch { /* No secret content in errors. */ } return json({ ok: true, serviceAccountEmail: email }); }
+    else if (action === 'set-sheet') { const id = parseSheetId(b.sheet); if (s.accounts.some(other => other.id !== a!.id && other.sheetId === id)) throw new AppError(409, 'sheet_taken', 'Эта таблица уже принадлежит другому аккаунту'); if (a.sheetId && a.sheetId !== id) {
+      a.sheetVersion = (a.sheetVersion || 1) + 1;
+      s.sessions = s.sessions.filter(session => session.accountId !== a!.id);
+    }
+    a.sheetId = id; let email = ''; try { email = JSON.parse(this.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}').client_email || ''; } catch { /* No secret content in errors. */ } return json({ ok: true, serviceAccountEmail: email }); }
     else if (action === 'revoke') s.sessions = s.sessions.filter(x => x.accountId !== a.id || (typeof b.sessionId === 'string' && x.id !== b.sessionId));
     else if (action === 'disable' || action === 'enable') { a.disabled = action === 'disable'; if (a.disabled) s.sessions = s.sessions.filter(x => x.accountId !== a.id); }
     else throw new AppError(404, 'not_found', 'Маршрут не найден');

@@ -18,3 +18,12 @@ describe('accounts and sessions', () => {
   it('session lists and individual revocation cannot expose or revoke another account', async () => { const f = accountFixture(), a = await f.login(); await f.admin('add', { login: 'aru', displayName: 'Aru', password: 'fictional-aru-password' }); const b = await f.login('aru', 'fictional-aru-password'); const list = await (await f.request('account/sessions', undefined, a.token)).json(); expect(list).toHaveLength(1); expect(Object.keys(list[0]).sort()).toEqual(['createdAt', 'current', 'device', 'id', 'lastUsedAt']); await f.request(`account/sessions/${list[0].id}`, undefined, b.token, 'DELETE'); expect((await f.request('account', undefined, a.token)).status).toBe(200); await f.admin('revoke', { login: 'tarlan', sessionId: list[0].id }); expect((await f.request('account', undefined, a.token)).status).toBe(401); expect((await f.request('account', undefined, b.token)).status).toBe(200); });
   it('public listing and admin limits return Retry-After independently of trusted sessions', async () => { const f = accountFixture(), a = await f.login(); for (let i = 0; i < 60; i++) await f.request('accounts'); const blocked = await f.request('accounts'); expect(blocked.status).toBe(429); expect(blocked.headers.get('Retry-After')).toBe('60'); for (let i = 0; i < 20; i++) await f.request('admin/list'); expect((await f.request('admin/list')).status).toBe(429); expect((await f.request('account', undefined, a.token)).status).toBe(200); });
 });
+
+it('rebinding revokes old sessions and refuses expenses stamped for the previous sheet', async () => {
+  const f = accountFixture(), old = await f.login();
+  await f.admin('set-sheet', {login:'tarlan', sheet:'replacement-audit-sheet-0000'});
+  expect((await f.request('account', undefined, old.token)).status).toBe(401);
+  const current = await f.login();
+  expect(current.account.sheetVersion).toBe(2);
+  expect((await f.request('expenses', {}, current.token)).status).toBe(409);
+});
