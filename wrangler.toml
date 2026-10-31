@@ -24,3 +24,11 @@ class_name = "SheetCoordinator"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SheetCoordinator"]
+
+[[durable_objects.bindings]]
+name = "ACCOUNTS"
+class_name = "AccountsDO"
+
+[[migrations]]
+tag = "v2-accounts"
+new_sqlite_classes = ["AccountsDO"]

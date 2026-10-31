@@ -15,11 +15,14 @@ export class Api {
   private tail: Promise<unknown> = Promise.resolve();
   private config: ConfigApi;
   constructor(private env: Env, private adapter: SheetsAdapter, operations?: OperationStorage) { this.auth = new Auth(env.APP_KEY || ''); this.config = new ConfigApi(adapter, operations); }
-  async fetch(request: Request): Promise<Response> {
+  fetch(request: Request): Promise<Response> { return this.handle(request, false); }
+  // Only SheetCoordinator calls this after AccountsDO resolved the session.
+  fetchAccount(request: Request): Promise<Response> { return this.handle(request, true); }
+  private async handle(request: Request, authenticated: boolean): Promise<Response> {
     try {
       const origin = request.headers.get('Origin');
       if (origin && origin !== new URL(request.url).origin) throw new AppError(403, 'origin', 'Запрос с другого сайта запрещён');
-      await this.auth.check(request);
+      if (!authenticated) await this.auth.check(request);
       if (new URL(request.url).pathname === '/api/health' && request.method === 'GET') return json({ ok: true });
       // Serializes read/check/write, including concurrent calls in the same DO.
       const run = this.tail.then(() => this.route(request));
