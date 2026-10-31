@@ -8,7 +8,8 @@ import { securityHeaders } from './headers';
 import { ConfigApi } from './config-api';
 import { configCategories } from '../../shared/config';
 import { MemoryOperations, type OperationStorage } from './config-store';
-import { EXPENSE_HEADERS, type TablePreparation } from './prepare-table';
+import { EXPENSE_HEADERS } from './sheets';
+import type { TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) { return error instanceof AppError ? json({ error: error.code, message: error.message }, error.status) : json({ error: 'upstream', message: 'Не удалось связаться с таблицей. Повторите позже' }, 503); }
 export class Api {
@@ -62,7 +63,14 @@ export class Api {
     if (row > 1006) throw new AppError(422, 'sheet_full', 'Лист заполнен до строки 1006. Запись осталась в очереди. Расширьте формулу и лимит строк приложения перед повтором');
     // A:D empty with nonempty G/H can be an incomplete external edit. Never overwrite metadata.
     if ([4,6,7].some(i => s.rows[row - 1]?.[i] != null && s.rows[row - 1][i] !== '')) throw new AppError(409, 'partial_row', `Строка ${row} содержит комментарий или служебные значения. Проверьте таблицу вручную`);
-    await this.adapter.write(row, e);
+    try { await this.adapter.write(row, e); }
+    catch (error) {
+      const latest = await this.adapter.readRow(row);
+      const committed = expensesFromRows([[], latest])[0];
+      if (committed?.fp === fingerprint(e)) return { expense: { ...committed, row }, duplicate: false };
+      if ([0,1,2,3,4,6,7].some(i => latest[i] != null && latest[i] !== '')) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал.');
+      throw error;
+    }
     return { expense: { ...e, row, fp: fingerprint(e) }, duplicate: false };
   }
   private async route(request: Request): Promise<Response> {
@@ -107,18 +115,23 @@ export class Api {
         if (current.id) await this.operations.put('deleted-expense:' + current.id, true);
         try { await this.adapter.clear(row); }
         catch (error) {
-          const latest = (await this.adapter.read(false)).rows[row - 1] || [];
-          if ([0,1,2,3,4,6,7].some(i => latest[i] != null && latest[i] !== '')) throw error;
+          const latest = await this.adapter.readRow(row);
+          if ([0,1,2,3,4,6,7].some(i => latest[i] != null && latest[i] !== '')) {
+            if (expensesFromRows([[], latest])[0]?.fp !== fp) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал.');
+            throw error;
+          }
         }
         return json({ ok: true });
       }
       const allowed = [...s.categories];
       if (current.category && (!('category' in b) || b.category === current.category) && (await this.config.read()).categories.some(c => c.archived && `${c.emoji} ${c.name}`.trim() === current.category)) allowed.push({ name: current.category, limit: 0 });
       const changed = validateExpense({ ...current, ...b, id: current.id || `${Date.now()}-${crypto.randomUUID()}` }, allowed, this.env.TZ);
-      await this.adapter.write(row, changed, current);
-      const saved = expensesFromRows((await this.adapter.read(false)).rows).find(e => e.row === row && e.id === changed.id);
-      if (!saved) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал');
-      return json({ expense: saved });
+      let writeError: unknown;
+      try { await this.adapter.write(row, changed, current); } catch (error) { writeError = error; }
+      const saved = expensesFromRows([[], await this.adapter.readRow(row)])[0];
+      if (writeError && saved?.fp === current.fp) throw writeError;
+      if (!saved || fingerprint(saved) !== fingerprint(changed)) throw new AppError(409, 'conflict', 'Строка изменилась. Обновите журнал');
+      return json({ expense: { ...saved, row } });
     }
     throw new AppError(405, 'method', 'Метод не поддерживается');
   }

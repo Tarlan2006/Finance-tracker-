@@ -48,3 +48,15 @@ describe('Google auth and transport', () => {
     await expect(adapter.clear(1)).rejects.toThrow();
   });
 });
+
+it('does not repeat an ambiguous Google clear', async () => {
+  let clears = 0;
+  const fetcher: typeof fetch = async url => {
+    if (String(url).includes('oauth2')) return Response.json({access_token:'fictional-token',expires_in:3600});
+    clears++;
+    throw new Error('lost reply');
+  };
+  const env: Env = { GOOGLE_SERVICE_ACCOUNT_JSON: credentials, SHEET_ID:'test', SHEET_NAME_EXPENSES:'Ввод данных', SHEET_NAME_INCOME:'Доходы и расходы', SHEET_NAME_DICT:'Справочник', TZ:'Asia/Almaty', CURRENCY:'₸', DUPLICATE_WINDOW_MIN:'3' };
+  await expect(new GoogleSheetsAdapter(env, fetcher).clear(2)).rejects.toThrow('lost reply');
+  expect(clears).toBe(1);
+});

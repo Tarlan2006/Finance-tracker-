@@ -1,3 +1,4 @@
+import { EXPENSE_HEADERS } from './sheets';
 import { AppError } from '../../shared/logic';
 import type { Config, ConfigCategory, ConfigItem, Row } from '../../shared/types';
 export const CATEGORY_SHEET = 'FT Categories', ITEM_SHEET = 'FT Items';
@@ -39,5 +40,6 @@ export function verifyPlan(plan: ConfigPlan, tables: ConfigTables, journal: Row[
     const now = (w.sheet === CATEGORY_SHEET ? tables.categories : tables.items)?.[w.row - 1] || [];
     if (!sameRow(now, w.before) && !sameRow(now, w.after)) throw configConflict();
   }
+  if (plan.moves.length && EXPENSE_HEADERS.some((header, i) => journal[0]?.[i] !== header)) throw configConflict();
   for (const m of plan.moves) { if (!Number.isInteger(m.row) || m.row < 2 || m.row > 1006) throw new AppError(422, 'range', 'Недопустимая строка журнала'); const now = String(journal[m.row - 1]?.[2] || ''); if (m.identity !== moveIdentity(journal[m.row - 1] || []) || (now !== m.from && now !== m.to)) throw configConflict(); }
 }

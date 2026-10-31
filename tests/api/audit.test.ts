@@ -46,3 +46,18 @@ it('keeps healthy expenses visible and reports invalid dates', async () => {
   expect(b.invalidDateRows).toEqual([2]);
   expect(b.history).toHaveLength(59);
 });
+
+it('reconciles a lost create response and refuses to clear a replacement a second time', async () => {
+  const body = input(), write = mock.write.bind(mock);
+  mock.write = async (row, expense) => { await write(row, expense); throw new Error('lost reply'); };
+  const created = await req('expenses','POST',body);
+  expect(created.status).toBe(201);
+  const {expense} = await created.json(), clear = mock.clear.bind(mock);
+  mock.clear = async row => {
+    await clear(row);
+    await write(row, {...body, name:'External',id:input().id});
+    throw new Error('lost reply');
+  };
+  expect((await req('expenses/'+expense.row,'DELETE',{fp:expense.fp})).status).toBe(409);
+  expect(mock.rows[expense.row - 1][1]).toBe('External');
+});

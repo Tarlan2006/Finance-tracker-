@@ -4,7 +4,8 @@ import { CATEGORY_SHEET, ITEM_SHEET, headers, type OperationStorage } from './co
 import type { Env } from './env';
 import { GoogleAuth, retryFetch } from './google-auth';
 import type { MockSheetsAdapter } from './mock-sheets';
-export const EXPENSE_HEADERS = ['Дата', 'Название расхода', 'Категория', 'Сумма (₸)', 'Комментарий', 'Месяц', 'ID', 'Источник'];
+import { EXPENSE_HEADERS } from './sheets';
+export { EXPENSE_HEADERS } from './sheets';
 export const MONTH_FORMULA = '=ARRAYFORMULA(IF(A2:A1006="","",TEXT(A2:A1006,"yyyy-mm")))';
 export const STARTER_CATEGORIES = [['🥦', 'Продукты'], ['☕', 'Кафе и рестораны'], ['🚗', 'Транспорт'], ['💊', 'Здоровье'], ['🛍️', 'Покупки и одежда'], ['🎬', 'Развлечения'], ['🎁', 'Подарки'], ['📦', 'Прочее']];
 interface Sheet { id: number; title: string }

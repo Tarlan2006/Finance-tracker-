@@ -57,6 +57,11 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
     const sheet = quoteSheet(this.env.SHEET_NAME_EXPENSES);
     return [`${sheet}!A${row}:E${row}`, `${sheet}!G${row}:H${row}`];
   }
+  async readRow(row: number) {
+    this.ranges(row);
+    const range = quoteSheet(this.env.SHEET_NAME_EXPENSES) + '!A' + row + ':H' + row;
+    return (await this.values([range]))[0]?.values?.[0] || [];
+  }
   async write(row: number, e: ExpenseInput, previous?: ExpenseInput) {
     const [first, last] = this.ranges(row);
     if (previous) {
