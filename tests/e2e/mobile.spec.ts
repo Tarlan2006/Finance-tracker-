@@ -1,16 +1,17 @@
+import { mockToken } from './auth';
 import { navigate } from './navigation';
 import { test, expect, type Page } from '@playwright/test';
 const key = 'mock-local-key';
 test.afterEach(async ({ request, context }) => {
   await context.setOffline(false);
-  const b = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': key } })).json();
+  const b = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json();
   expect(b.mock).toBe(true);
   for (const e of b.history as { id: string; row: number; fp: string }[]) {
-    if (!e.id.includes('-mock-')) await request.delete(`/api/expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, { headers: { 'X-App-Key': key } });
+    if (!e.id.includes('-mock-')) await request.delete(`/api/expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, { headers: { 'X-App-Key': await mockToken(request) } });
   }
 });
-async function bootstrap(page: Page) { return page.evaluate(async key => (await fetch('/api/bootstrap', { headers: { 'X-App-Key': key } })).json(), key); }
-async function login(page: Page, url = '/') { await page.goto(url); await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
+async function bootstrap(page: Page) { return page.evaluate(async () => (await fetch('/api/bootstrap', { headers: { 'X-App-Key': localStorage.getItem('app-key') || '' } })).json()); }
+async function login(page: Page, url = '/') { await page.goto(url); await page.getByLabel('Пароль', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
 async function record(page: Page, amount = '1000') { if (amount === '1000') { await page.getByRole('button', { name: '1', exact: true }).tap(); await page.getByRole('button', { name: '000', exact: true }).tap(); } else { for (const digit of amount) await page.getByRole('button', { name: digit, exact: true }).tap(); } await page.getByRole('button', { name: '🍔 Продукты и супермаркеты', exact: true }).tap(); await page.getByRole('button', { name: /^Сохранить ·/ }).tap(); }
 async function settled(page: Page, id: string) { await expect.poll(async () => (await bootstrap(page)).history.filter((e: { name: string }) => e.name === id).length).toBe(1); }
 test('ручная запись за 4 касания, пустое название, скриншот', async ({ page }, info) => {

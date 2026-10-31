@@ -1,7 +1,7 @@
 import { navigate } from './navigation';
 import { test, expect, type Page } from '@playwright/test';
 const key = 'mock-local-key';
-async function login(page: Page) { await page.goto('/'); await page.getByLabel('Код доступа', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
+async function login(page: Page) { await page.goto('/'); await page.getByLabel('Пароль', { exact: true }).fill(key); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible(); }
 async function save(page: Page) { await page.getByRole('button', { name: '1', exact: true }).click(); await page.getByRole('button', { name: '000', exact: true }).click(); await page.getByRole('button', { name: '🍔 Продукты и супермаркеты', exact: true }).click(); await page.getByRole('button', { name: /^Сохранить ·/ }).click(); }
 test('audit: own suggestions below input with keyboard semantics', async ({ page }) => {
   await login(page); const name = page.getByLabel('Название', { exact: false }).first(); await name.fill('ко');
@@ -29,6 +29,6 @@ test('audit: platform HTML 404 remains retryable', async ({ page }) => {
 test('audit: logout closes access in a second tab and removes history cache', async ({ page, context }) => {
   await login(page); const second = await context.newPage(); await second.goto('/'); await expect(second.getByRole('heading', { name: 'Траты' })).toBeVisible();
   await navigate(page, 'Ещё'); await page.getByRole('button', { name: 'Выйти', exact: true }).click();
-  await expect(second.getByLabel('Код доступа', { exact: true })).toBeVisible();
+  await expect(second.getByLabel('Пароль', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('bootstrap-')))).toEqual([]);
 });

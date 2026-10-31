@@ -1,12 +1,13 @@
+import { initMockSession, mockToken } from './auth';
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
 test.use({ reducedMotion: 'no-preference', deviceScaleFactor: 1 });
-const key = 'mock-local-key';
+
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(({ page }) => { const list: string[] = []; errors.set(page, list); page.on('pageerror', e => list.push(e.message)); });
 test.afterEach(({ page }) => expect(errors.get(page)).toEqual([]));
 async function ready(page: Page) {
-  await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key'));
+  await initMockSession(page);
   await page.goto('/'); await expect(page.locator('.expense-main').first()).toBeVisible();
   await page.waitForTimeout(650);
 }
@@ -33,12 +34,14 @@ test('motion: fast navigation, sheet interruption, retained draft and pointer dr
   await page.getByRole('button', { name: 'Ещё', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Ещё', exact: true })).toBeVisible(); await settled(page);
 });
 test('motion: save, chart morph, selection, deletion and undo settle', async ({ page, request }, info) => {
-  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': key } })).json(); expect(base.mock).toBe(true);
+  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json(); expect(base.mock).toBe(true);
   await ready(page); const name = `Motion ${info.project.name} ${Date.now()}`;
   const shot = (label: string) => page.screenshot({ path: `tests/screenshots/motion/${info.project.name}-${label}.png`, scale: 'css' });
   try {
     await page.getByRole('button', { name: 'Добавить расход', exact: true }).click(); await page.getByRole('button', { name: '7', exact: true }).click(); await page.locator('.category').first().click();
-    await page.getByRole('combobox', { name: /Название/ }).fill(name); await page.locator('.save').click(); await expect(page.locator('.save')).toHaveClass(/success/);
+    await page.getByRole('combobox', { name: /Название/ }).fill(name);
+    await page.locator('.save').evaluate(button => { const observer = new MutationObserver(() => { if (button.classList.contains('success')) { button.querySelector('.save-check')?.getAnimations().forEach(a => { a.pause(); a.currentTime = 200; }); observer.disconnect(); } }); observer.observe(button, { attributes: true, attributeFilter: ['class'] }); });
+    await page.locator('.save').click(); await expect(page.locator('.save')).toHaveClass(/success/);
     // Freeze the real 400 ms effect at its midpoint for an inspectable frame;
     // screenshot encoding itself can take longer than the feedback animation.
     await page.locator('.save-check').evaluate(n => n.getAnimations().forEach(a => { a.pause(); a.currentTime = 200; }));
@@ -59,8 +62,8 @@ test('motion: save, chart morph, selection, deletion and undo settle', async ({ 
     await expect(page.locator('.donut-segment[aria-pressed="true"]')).toHaveCount(1);
     await page.getByRole('button', { name: 'Сбросить выбор категории' }).click(); await settled(page); await expect(page.locator('.donut-center')).toContainText('Всего');
   } finally {
-    const data = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': key } })).json(); expect(data.mock).toBe(true);
-    for (const e of data.history.filter((e: { name: string }) => e.name === name)) await request.delete(`/api/expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, { headers: { 'X-App-Key': key } });
+    const data = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json(); expect(data.mock).toBe(true);
+    for (const e of data.history.filter((e: { name: string }) => e.name === name)) await request.delete(`/api/expenses/${e.row}?fp=${encodeURIComponent(e.fp)}`, { headers: { 'X-App-Key': await mockToken(request) } });
   }
 });
 test('motion: reduced preference changes cancel movement immediately', async ({ page }) => {

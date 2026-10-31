@@ -1,10 +1,11 @@
+import { initMockSession } from './auth';
 import { navigate } from './navigation';
 import { test, expect } from '@playwright/test';
 test('synthetic mobile startup and optimistic offline acknowledgement', async ({ page, context }) => {
   const cdp = await context.newCDPSession(page);
   await cdp.send('Network.enable'); await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 150, downloadThroughput: 200000, uploadThroughput: 93750, connectionType: 'cellular4g' });
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-  await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key'));
+  await initMockSession(page);
   let bootstrapRequests = 0; page.on('request', r => { if (r.url().includes('/api/bootstrap')) bootstrapRequests++; });
   const start = Date.now(); await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты' })).toBeVisible(); const startupMs = Date.now() - start; await navigate(page, 'Добавить');
   await page.evaluate(async () => navigator.serviceWorker.ready); await context.setOffline(true);

@@ -1,10 +1,11 @@
+import { initMockSession } from './auth';
 import { test, expect } from '@playwright/test';
 import { navigate } from './navigation';
 test('desktop sidebar, master-detail, shortcuts, dialog and page zoom', async ({ browser }, info) => {
   const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', reducedMotion: 'reduce', viewport: { width: 1440, height: 900 }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: false, isMobile: false });
   const page = await context.newPage();
   try {
-    await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key')); await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible();
+    await initMockSession(page); await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible();
     expect((await page.locator('.navigation').boundingBox())!.x).toBe(0);
     await page.locator('.expense-main').first().click(); await expect(page.getByRole('form', { name: 'Правка расхода' })).toBeVisible(); await expect(page.getByRole('dialog')).toHaveCount(0);
     expect((await page.locator('.detail-panel').boundingBox())!.x).toBeGreaterThan((await page.locator('.journal-list').boundingBox())!.x);

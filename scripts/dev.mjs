@@ -12,5 +12,5 @@ function start(args) { const child = spawn(process.execPath, args, { stdio: 'inh
 let stopping = false;
 function stop(code = 0) { if (stopping) return; stopping = true; children.forEach(c => c.kill()); process.exit(code); }
 process.on('SIGINT', () => stop()); process.on('SIGTERM', () => stop());
-start(['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', '8787', '--var', 'USE_MOCK:1', '--var', 'APP_KEY:mock-local-key']);
+start(['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', '8787', '--var', 'USE_MOCK:1', '--var', 'APP_KEY:mock-local-key', '--var', 'ADMIN_TOKEN:mock-admin-only']);
 start(['node_modules/vite/bin/vite.js', '--host', '127.0.0.1']);

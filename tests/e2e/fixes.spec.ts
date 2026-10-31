@@ -1,3 +1,4 @@
+import { initMockSession } from './auth';
 import { test, expect, type Page } from '@playwright/test';
 import { Api } from '../../worker/src/router';
 import { MockSheetsAdapter } from '../../worker/src/mock-sheets';
@@ -15,10 +16,10 @@ async function prepare(page: Page) {
   mock.read = async () => { const s = await read(); s.summaries = [{ month: '2026-10', income: 260000, fixed: 93730, journal: 165872, total: 259602, balance: 398, savings: 0 }]; return s; };
   const api = new Api(env, mock);
   await page.clock.install({ time: new Date('2026-10-31T10:00:00Z') });
-  await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key'));
+  await initMockSession(page);
   // Each browser scenario gets the real Api + MockSheetsAdapter in an isolated process fixture.
   // No configuration mutation reaches the shared dev worker, let alone production.
-  await page.route('**/api/**', async route => { const r = route.request(), response = await api.fetch(new Request(r.url(), { method: r.method(), headers: r.headers(), body: r.postData() || undefined })); await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() }); });
+  await page.route('**/api/**', async route => { const r = route.request(); if (['/api/account', '/api/logout', '/api/login'].some(path => new URL(r.url()).pathname.startsWith(path))) { await route.continue(); return; } const response = await api.fetchAccount(new Request(r.url(), { method: r.method(), headers: r.headers(), body: r.postData() || undefined })); await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() }); });
   await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible();
   return { mock, api, config: async () => (await api.fetch(new Request('http://127.0.0.1:8787/api/config', { headers: { 'X-App-Key': key } }))).json() };
 }

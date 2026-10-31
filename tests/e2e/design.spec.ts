@@ -1,3 +1,4 @@
+import { initMockSession, mockToken } from './auth';
 import { test, expect, type Page } from '@playwright/test';
 import type { Bootstrap, Expense } from '../../shared/types';
 import { navigate } from './navigation';
@@ -8,13 +9,13 @@ function fixture(base: Bootstrap): Bootstrap {
   return { ...base, history, expenses: history.filter(e => e.date.startsWith('2026-11')), summaries: [], summary: null };
 }
 async function prepare(page: Page, getData: () => Bootstrap, requested: Set<string>) {
-  await page.clock.install({ time: new Date('2026-11-01T10:00:00Z') }); await page.addInitScript(() => localStorage.setItem('app-key', 'mock-local-key'));
+  await page.clock.install({ time: new Date('2026-11-01T10:00:00Z') }); await initMockSession(page);
   await page.route('**/api/bootstrap*', route => route.fulfill({ json: getData() }));
   await page.route('**/api/expenses?*', route => { const month = new URL(route.request().url()).searchParams.get('month')!; requested.add(month); return route.fulfill({ json: { expenses: getData().history.filter(e => e.date.startsWith(month)) } }); });
   await page.goto('/'); await expect(page.getByRole('heading', { name: 'Траты', exact: true })).toBeVisible();
 }
 for (const [width, height] of [[360, 740], [412, 915], [768, 1024], [1024, 768], [1440, 900]]) test(`design interactions ${width}x${height}`, async ({ browser, request }, info) => {
-  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': 'mock-local-key' } })).json(); expect(base.mock).toBe(true);
+  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json(); expect(base.mock).toBe(true);
   const data = fixture(base), requested = new Set<string>(), touch = width < 600;
   const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8787', reducedMotion: 'reduce', viewport: { width, height }, colorScheme: info.project.name === 'light' ? 'light' : 'dark', hasTouch: touch, isMobile: touch, deviceScaleFactor: touch ? 2 : 1 }); const page = await context.newPage();
   const click = async (selector: string) => { const node = page.locator(selector); if (touch) await node.tap(); else await node.click(); };
@@ -41,7 +42,7 @@ for (const [width, height] of [[360, 740], [412, 915], [768, 1024], [1024, 768],
   } finally { await context.close(); }
 });
 test('empty, single huge expense, reduced motion, keyboard ring and CSV rejection', async ({ page, request }, info) => {
-  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': 'mock-local-key' } })).json(); expect(base.mock).toBe(true); let data = { ...fixture(base), expenses: [], history: [] } as Bootstrap;
+  const base = await (await request.get('/api/bootstrap', { headers: { 'X-App-Key': await mockToken(request) } })).json(); expect(base.mock).toBe(true); let data = { ...fixture(base), expenses: [], history: [] } as Bootstrap;
   await prepare(page, () => data, new Set()); await navigate(page, 'Обзор'); await expect(page.getByTestId('overview-total')).toHaveText(money(0)); await expect(page.locator('.category-panel')).toContainText('Пока нет трат'); await expect(page.locator('.donut-segment')).toHaveCount(0);
   data = fixture(base); data.history = [{ ...data.history[6], amount: 999999999.99 }]; data.expenses = data.history;
   data.summaries = [{ month: '2026-11', income: 0, fixed: 0, journal: 999999999.99, total: 999999999.99, balance: -999999999.99, savings: 0 }];

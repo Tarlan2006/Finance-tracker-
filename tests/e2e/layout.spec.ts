@@ -1,7 +1,7 @@
 import { navigate } from './navigation';
 import { test, expect } from '@playwright/test';
 test('responsive layouts, enlarged type, viewport keyboard and screenshots', async ({ page }, info) => {
-  await page.goto('/'); await page.getByLabel('Код доступа', { exact: true }).fill('mock-local-key'); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible();
+  await page.goto('/'); await page.getByLabel('Пароль', { exact: true }).fill('mock-local-key'); await page.getByRole('button', { name: 'Войти' }).click(); await navigate(page, 'Добавить'); await expect(page.getByRole('heading', { name: 'Новый расход' })).toBeVisible();
   for (const [width, height] of [[412, 915], [360, 740], [768, 1024]]) {
     await page.setViewportSize({ width, height });
     for (const [button, file] of [['Добавить', 'add'], ['Траты', 'expenses'], ['Обзор', 'overview'], ['Ещё', 'more']]) {
