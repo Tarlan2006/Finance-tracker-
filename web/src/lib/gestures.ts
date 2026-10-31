@@ -1,13 +1,34 @@
-import { useEffect, type RefObject } from 'react';
-// Only non-destructive dismissal, from the edge or the explicit sheet handle.
+﻿import { useEffect, type RefObject } from 'react';
+import { animate, duration, reducedMotion, token } from '../motion';
+// Pointer capture is restricted to handles. Normal content keeps native scrolling.
 export function useDismissGesture(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
   useEffect(() => {
     const node = ref.current; if (!open || !node) return;
-    let start: { x: number; y: number; kind: 'edge' | 'sheet' } | null = null;
-    const down = (e: TouchEvent) => { if (e.touches.length !== 1) { start = null; return; } const p = e.touches[0], target = e.target as HTMLElement; const handle = !!target.closest('[data-drag-handle]'); start = p.clientX <= 20 ? { x: p.clientX, y: p.clientY, kind: 'edge' } : handle ? { x: p.clientX, y: p.clientY, kind: 'sheet' } : null; };
-    const end = (e: TouchEvent) => { if (!start) return; const p = e.changedTouches[0], dx = p.clientX - start.x, dy = p.clientY - start.y; if (start.kind === 'edge' ? dx > 80 && Math.abs(dy) < 40 : dy > 80 && Math.abs(dx) < 40) close(); start = null; };
-    const cancel = () => { start = null; };
-    node.addEventListener('touchstart', down, { passive: true }); node.addEventListener('touchend', end, { passive: true }); node.addEventListener('touchcancel', cancel);
-    return () => { node.removeEventListener('touchstart', down); node.removeEventListener('touchend', end); node.removeEventListener('touchcancel', cancel); };
+    let drag: { id: number; x: number; y: number; time: number; edge: boolean; base: string; handle: HTMLElement } | null = null;
+    const reset = () => { node.style.removeProperty('transform'); node.style.removeProperty('will-change'); };
+    const down = (e: PointerEvent) => {
+      if (!e.isPrimary || e.button !== 0 || matchMedia('(min-width:1024px)').matches) return;
+      const target = e.target as HTMLElement, handle = target.closest<HTMLElement>('[data-drag-handle],[data-edge-handle]');
+      if (!handle || target.closest('button,input,select,textarea')) return;
+      const base = getComputedStyle(node).transform;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, time: performance.now(), edge: handle.hasAttribute('data-edge-handle'), base: base === 'none' ? '' : base, handle };
+      handle.setPointerCapture(e.pointerId);
+      if (!reducedMotion()) node.style.willChange = 'transform';
+    };
+    const move = (e: PointerEvent) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      const distance = Math.max(0, drag.edge ? e.clientX - drag.x : e.clientY - drag.y);
+      if (!reducedMotion()) node.style.transform = `${drag.base} translate${drag.edge ? 'X' : 'Y'}(${distance}px)`;
+    };
+    const finish = (e: PointerEvent) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      const distance = Math.max(0, drag.edge ? e.clientX - drag.x : e.clientY - drag.y), velocity = distance / Math.max(1, performance.now() - drag.time);
+      const from = getComputedStyle(node).transform, base = drag.base || 'none';
+      drag = null;
+      if (e.type === 'pointerup' && (distance > 80 || distance > 24 && velocity > .45)) { close(); reset(); }
+      else { reset(); animate(node, [{ transform: from }, { transform: base }], { duration: duration('dur-slow'), easing: token('spring') }); }
+    };
+    node.addEventListener('pointerdown', down); node.addEventListener('pointermove', move); node.addEventListener('pointerup', finish); node.addEventListener('pointercancel', finish);
+    return () => { node.removeEventListener('pointerdown', down); node.removeEventListener('pointermove', move); node.removeEventListener('pointerup', finish); node.removeEventListener('pointercancel', finish); reset(); };
   }, [ref, open, close]);
 }

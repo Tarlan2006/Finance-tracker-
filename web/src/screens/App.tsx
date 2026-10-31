@@ -6,6 +6,7 @@ import { useAppearance } from '../lib/appearance';
 import { useVisualViewport } from '../lib/viewport';
 import { useDialog } from '../lib/dialog';
 import { useDismissGesture } from '../lib/gestures';
+import { exitSnapshot, transitionScreen, useEnter, useMotionLifecycle } from '../motion';
 import Add, { type Draft } from './Add';
 import Expenses from './Expenses';
 import Overview from './Overview';
@@ -15,24 +16,27 @@ const tabs: { name: string; icon: IconName }[] = [{ name: 'Траты', icon: 'e
 function readDraft(): Draft & { open: boolean } { const p = new URLSearchParams(location.search), open = p.has('amount') || p.has('merchant'); const draft = { amount: p.get('amount') || '', name: p.get('merchant') || '', source: p.get('src') || 'manual', ts: p.has('ts') ? Number(p.get('ts')) * 1000 : undefined, open }; if (open) history.replaceState({ tab: 0, add: true }, '', location.pathname); return draft; }
 const initialDraft = readDraft();
 export default function App() {
-  useVisualViewport();
+  useVisualViewport(); useMotionLifecycle();
   const finance = useFinance(), { key, data, queue, online, error, toast, duplicate, setDuplicate } = finance;
   const { theme, setTheme } = useAppearance();
   const [tab, setTab] = useState<number>(history.state?.tab || 0), [addOpen, setAddOpen] = useState(initialDraft.open || !!history.state?.add);
   const [draft, setDraft] = useState<Draft>(initialDraft), [month, setMonth] = useState(today('Asia/Almaty').slice(0, 7)), [filter, setFilter] = useState<JournalFilter | null>(null);
+  const [quiet, setQuiet] = useState(false);
   const [compact, setCompact] = useState(false), [logoutPrompt, setLogoutPrompt] = useState(false);
   const dialog = useRef<HTMLDivElement>(null), addDialog = useRef<HTMLDivElement>(null), previousKey = useRef(key);
   const money = useCallback((n: number) => `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n)} ₸`, []);
-  const cancelDialog = useCallback(() => { duplicate?.resolve(false); setDuplicate(null); setLogoutPrompt(false); }, [duplicate, setDuplicate]);
+  const cancelDialog = useCallback(() => { exitSnapshot(dialog.current); duplicate?.resolve(false); setDuplicate(null); setLogoutPrompt(false); }, [duplicate, setDuplicate]);
   useDialog(dialog, !!duplicate || logoutPrompt, cancelDialog);
-  const closeAdd = useCallback(() => { setAddOpen(false); history.replaceState({ tab: history.state?.tab || 0 }, '', location.pathname); }, []);
+  const closeAdd = useCallback(() => { exitSnapshot(addDialog.current); setAddOpen(false); history.replaceState({ tab: history.state?.tab || 0 }, '', location.pathname); }, []);
+  useEnter(addDialog, addOpen && !!data, 'sheet');
+  useEnter(dialog, !!duplicate || logoutPrompt, 'sheet');
   useDialog(addDialog, addOpen && !!data && !duplicate, closeAdd);
   useDismissGesture(addDialog, addOpen && !!data && !duplicate, closeAdd);
   useDismissGesture(dialog, !!duplicate || logoutPrompt, cancelDialog);
-  useEffect(() => { const back = (event: PopStateEvent) => { setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => setCompact(window.scrollY > 64); window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
+  useEffect(() => { let last = window.scrollY; const back = (event: PopStateEvent) => { setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => { const y = window.scrollY; setCompact(y > 64); if (Math.abs(y - last) > 8) { setQuiet(y > 120 && y > last); last = y; } }; window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
   useEffect(() => { if (previousKey.current && !key) { setDraft({ amount: '', name: '', source: 'manual' }); setAddOpen(false); setLogoutPrompt(false); setTab(0); setFilter(null); history.replaceState({ tab: 0 }, '', location.pathname); } previousKey.current = key; }, [key]);
   useEffect(() => { if (key && data && tab === 0) void finance.loadMonths([month]); }, [key, !!data, tab, month, finance.loadMonths]);
-  function navigate(next: number) { history.pushState({ tab: next }, '', location.pathname); setTab(next); setAddOpen(false); window.scrollTo({ top: 0 }); }
+  function navigate(next: number) { if (next === tab && !addOpen) return; transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); setAddOpen(false); setQuiet(false); window.scrollTo({ top: 0 }); }, Math.sign(next - tab)); }
   function openAdd() { history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
@@ -56,12 +60,12 @@ export default function App() {
       {tab === 1 && <Overview data={data} money={money} loadMonths={finance.loadMonths} showExpenses={range => { setFilter(range); setMonth(range.start.slice(0, 7)); navigate(0); }}/>}
       {tab === 2 && <More data={data} queue={queue} theme={theme} setTheme={setTheme} sync={finance.sync} exportCsv={finance.exportCsv} logout={requestLogout}/>}
     </>}</main>
-    <div className="navigation"><nav className="bottom-nav material" aria-label="Основная навигация">{tabs.map((t, i) => <button key={t.name} aria-label={t.name} aria-current={tab === i ? 'page' : undefined} onClick={() => navigate(i)}><Icon name={t.icon}/><span>{t.name}</span></button>)}</nav><button className="add-button" aria-label="Добавить расход" title="Добавить расход (N)" onClick={openAdd}><Icon name="plus"/><span>Добавить</span></button></div>
+    <div className={`navigation ${quiet ? 'quiet' : ''}`}><nav className="bottom-nav material" aria-label="Основная навигация" style={{ '--active-tab': tab } as React.CSSProperties}><i className="nav-indicator" aria-hidden="true"/>{tabs.map((t, i) => <button key={t.name} aria-label={t.name} aria-current={tab === i ? 'page' : undefined} onClick={() => navigate(i)}><Icon name={t.icon}/><span>{t.name}</span></button>)}</nav><button className="add-button" aria-label="Добавить расход" title="Добавить расход (N)" onClick={openAdd}><Icon name="plus"/><span>Добавить</span></button></div>
   </div>
-    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
-    {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2 data-drag-handle>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Для восстановления понадобится прежний код доступа. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={() => setLogoutPrompt(false)}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
+    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
+    {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2 data-drag-handle>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Для восстановления понадобится прежний код доступа. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={cancelDialog}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
     {toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}
-    {!!finance.deletions.length && <div className="undo-stack">{finance.deletions.map(e => <div key={e.row}><span>Удаляем: {displayName(e)}</span><button onClick={() => finance.undo(e)}>Отменить</button></div>)}</div>}
-    {duplicate && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Похоже на дубль" className="modal"><h2 data-drag-handle>Похоже на дубль</h2><p>{displayName(duplicate.expense)} · {money(duplicate.expense.amount)}</p><p>Такая трата уже есть. Всё равно сохранить?</p><button className="primary" onClick={() => { duplicate.resolve(true); setDuplicate(null); }}>Всё равно сохранить</button><button onClick={cancelDialog}>Отмена</button></div></div>}
+    {!!finance.deletions.length && <div className="undo-stack">{finance.deletions.map(e => <div key={e.row}><span>Удаляем: {displayName(e)}</span><button onClick={event => { exitSnapshot(event.currentTarget.parentElement); finance.undo(e); }}>Отменить</button></div>)}</div>}
+    {duplicate && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Похоже на дубль" className="modal"><h2 data-drag-handle>Похоже на дубль</h2><p>{displayName(duplicate.expense)} · {money(duplicate.expense.amount)}</p><p>Такая трата уже есть. Всё равно сохранить?</p><button className="primary" onClick={() => { exitSnapshot(dialog.current); duplicate.resolve(true); setDuplicate(null); }}>Всё равно сохранить</button><button onClick={cancelDialog}>Отмена</button></div></div>}
   </div>;
 }
