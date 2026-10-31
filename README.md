@@ -108,3 +108,7 @@ POST   /api/config/items[/id]        (operationId, rev, month, amount, scope; re
 ```
 
 Google API: чтение UNFORMATTED_VALUE/SERIAL_NUMBER, пакетные запросы; текст RAW защищает от формул, даты записываются числовым serial с сохранением существующего формата. Подробности контракта — [документация Google](https://developers.google.com/workspace/sheets/api/guides/values). Статика и API используют [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/binding/).
+
+## Логотип и иконки
+
+Единственный исходник — `web/public/icons/logo.svg`. Перегенерация: `node scripts/make-icons.mjs` (установленный Playwright Chromium, без новых зависимостей); `node scripts/make-icons.mjs --check` проверяет побайтную воспроизводимость. Контактные листы после браузерных тестов: `node scripts/logo-contacts.mjs`. Для обновления иконки установленного Android/WebAPK отправьте офлайн-очередь, удалите приложение и установите его заново: Android кеширует иконку.
