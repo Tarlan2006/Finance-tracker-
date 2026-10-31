@@ -96,6 +96,7 @@ export class AccountsService {
     if (path === '/api/account' && method === 'GET') return json({ account: view(a), queueKey: a.queueKey });
     if (path === '/api/account/sessions' && method === 'GET') return json(s.sessions.filter(x => x.accountId === a.id).map(x => ({ id: x.id, device: x.device, createdAt: x.createdAt, lastUsedAt: x.lastUsedAt, current: x.id === session.id })));
     if (path.startsWith('/api/account/sessions/') && method === 'DELETE') { const id = path.slice('/api/account/sessions/'.length); s.sessions = s.sessions.filter(x => x.accountId !== a.id || x.id !== id); return json({ ok: true }); }
+    if (request.headers.has('X-FT-Expected-Sheet') && request.headers.get('X-FT-Expected-Sheet') !== a.sheetId) throw new AppError(409, 'sheet_changed', 'Привязка таблицы изменилась');
     if (!a.sheetId) throw new AppError(409, 'sheet_unlinked', 'Таблица ещё не подключена. Обратитесь к администратору');
     if (path === '/api/expenses' && method === 'POST' && (request.headers.get('X-FT-Sheet-Version') || '1') !== String(a.sheetVersion || 1)) {
       throw new AppError(409, 'sheet_changed', 'Таблица была заменена. Эта трата сохранена для прежней таблицы. Проверьте её и при необходимости создайте новую запись.');
