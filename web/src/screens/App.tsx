@@ -14,6 +14,7 @@ import Expenses from './Expenses';
 import Overview from './Overview';
 import More from './More';
 import Logo from './Logo';
+import TableConnection from './TableConnection';
 import { PasswordForm } from './Account';
 import Icon, { type IconName } from './Icon';
 const currencyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
@@ -68,7 +69,7 @@ export default function App() {
     <button onClick={() => void finance.reload()}>Проверить снова</button>
     <button onClick={() => void finance.logout()}>Выйти</button>
   </main>;
-  if (finance.tableState) return <main className="login"><Logo className="login-logo"/><h1>{finance.tableState === 'sheet_unlinked' ? 'Таблица ещё не подключена' : 'Таблица подключена, но пуста'}</h1><p>{finance.tableState === 'sheet_unlinked' ? 'Обратитесь к администратору: он подключит вашу Google-таблицу.' : 'Подготовим журнал и начальные категории. Доходы и ежемесячные расходы вы добавите в настройках.'}</p>{finance.tableState === 'table_uninitialized' && <button className="primary" disabled={finance.loading} onClick={() => void finance.prepareTable()}>{finance.loading ? 'Подготавливаем…' : 'Подготовить таблицу'}</button>}<button onClick={() => void finance.reload()}>Проверить подключение</button><button onClick={requestLogout}>Выйти</button>{error && <p role="alert" className="error">{error}</p>}</main>;
+  if (finance.tableState) return <TableConnection state={finance.tableState} error={error} check={finance.reload} prepare={finance.prepareTable} logout={requestLogout}/>;
   const modal = (addOpen && !!data) || logoutPrompt || !!duplicate;
   return <div className="app-shell"><div className="app-content" inert={modal}>
     <header className={`app-header material ${compact ? 'compact' : ''}`}><span className="brand"><Logo/>Finance Tracker</span><strong className="compact-title">{tabs[tab].name}</strong><span className={`connection ${online ? '' : 'offline'}`}><i/>{online ? data?.mock ? 'Демо' : 'На связи' : 'Офлайн'}{queue.length ? ` · ${queue.length}` : ''}</span></header>
@@ -83,7 +84,7 @@ export default function App() {
     </>}</main>
     <div className={`navigation ${quiet ? 'quiet' : ''}`}><nav className="bottom-nav material" aria-label="Основная навигация" style={{ '--active-tab': tab } as React.CSSProperties}><i className="nav-indicator" aria-hidden="true"/>{tabs.map((t, i) => <button key={t.name} aria-label={t.name} aria-current={tab === i ? 'page' : undefined} onClick={() => navigate(i)}><Icon name={t.icon}/><span>{t.name}</span></button>)}</nav><button className="add-button" aria-label="Добавить расход" title="Добавить расход (N)" onClick={openAdd}><Icon name="plus"/><span>Добавить</span></button></div>
   </div>
-    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><span>Добавить расход</span></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
+    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><h1>Новый расход</h1></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
     {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2 data-drag-handle>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Она откроется при следующем входе в этот аккаунт. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={cancelDialog}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
     <Presence>{toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}</Presence>
     {!!finance.itemDeletions.length && <div className="undo-stack">{finance.itemDeletions.map(item => <div key={item.id}><span>Убираем статью: {item.name}</span><button onClick={() => finance.undoItem(item)}>Отменить</button></div>)}</div>}

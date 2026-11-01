@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { dateLabel } from '../lib/format';
 import { useDialog } from '../lib/dialog';
 import { displayName, parseAmount, sum, shiftDate } from '../../../shared/logic';
-import { categoryEmoji, categoryTitle, colorIndex, inPeriod, type JournalFilter } from '../../../shared/analytics';
+import { categoryTitle, inPeriod, type JournalFilter } from '../../../shared/analytics';
 import { budget } from '../../../shared/config';
 import { exitSnapshot, transitionScreen, useEnter, useFlip } from '../motion';
 import Progress from '../motion/Progress';
 import MonthPicker from './MonthPicker';
 import RetryTime from './RetryTime';
 import Icon from './Icon';
+import CategoryIcon from './CategoryIcon';
 import { useMedia } from '../lib/media';
 import { useDismissGesture } from '../lib/gestures';
 import type { Bootstrap, Category, Expense } from '../../../shared/types';
@@ -16,7 +17,6 @@ import type { Queued } from '../lib/queue';
 export default function Expenses({ data, openSettings, expenses: history, categories, queue, money, edit, remove, retry, editQueue, removeQueue, month, setMonth, range, clearRange, currentDay }: { data: Bootstrap | null; openSettings: () => void; expenses: Expense[]; categories: Category[]; queue: Queued[]; money: (n: number) => string; edit: (e: Expense, patch: Partial<Expense>) => Promise<void>; remove: (e: Expense) => void; retry: (q: Queued) => void; editQueue: (q: Queued, patch: Partial<Expense>) => Promise<void>; removeQueue: (q: Queued) => void; month: string; setMonth: (month: string) => void; range: JournalFilter | null; clearRange: () => void; currentDay: string }) {
   const expenses = range ? inPeriod(history, range).filter(e => !range.categories || range.categories.includes(e.category)) : history.filter(e => e.date.startsWith(month));
   const spent = sum(expenses), balance = data && budget(data, history, month, currentDay);
-  const colorKey = (name: string) => categories.find(c => c.name === name)?.id || name;
   const title = (name: string) => categoryTitle(name) + (categories.find(c => c.name === name)?.archived ? ' (архив)' : '');
   const earliest = history.reduce((min, e) => e.date.slice(0, 7) < min ? e.date.slice(0, 7) : min, currentDay.slice(0, 7));
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -38,7 +38,7 @@ export default function Expenses({ data, openSettings, expenses: history, catego
   const listRoot = useRef<HTMLDivElement>(null);
   useFlip(listRoot, `${month}|${list.map(e => e.row).join(',')}|${queue.map(q => q.id).join(',')}|${queueUndo.map(q => q.id).join(',')}`, '[data-motion-key]', true);
   const pending = list.filter(e => !e.category);
-  function row(e: Expense) { return <article className="expense-row" key={e.row} data-motion-key={`row:${e.row}`}><button className="expense-main" onClick={() => open(e)} aria-label={`${displayName(e)} · ${title(e.category)} · ${money(e.amount)} · в таблице`}><span className="expense-emoji" style={{ color: `var(--chart-${colorIndex(colorKey(e.category))})`, backgroundColor: `color-mix(in srgb, var(--chart-${colorIndex(colorKey(e.category))}) 10%, var(--card))` }}>{categoryEmoji(e.category)}</span><span className="expense-description"><strong title={displayName(e)}>{displayName(e)}</strong><small>{title(e.category)}</small></span><strong className="expense-amount">{money(e.amount)}</strong></button></article>; }
+  function row(e: Expense) { return <article className="expense-row" key={e.row} data-motion-key={`row:${e.row}`}><button className="expense-main" onClick={() => open(e)} aria-label={`${displayName(e)} · ${title(e.category)} · ${money(e.amount)} · в таблице`}><span className="expense-emoji"><CategoryIcon name={e.category}/></span><span className="expense-description"><strong title={displayName(e)}>{displayName(e)}</strong><small>{title(e.category)}</small></span><strong className="expense-amount">{money(e.amount)}</strong></button></article>; }
   const dayTitle = (day: string) => day === currentDay ? 'Сегодня' : day === shiftDate(currentDay, -1) ? 'Вчера' : dateLabel(day, { weekday: 'short', day: 'numeric', month: 'long' });
   return <section className="journal-screen"><h1>Траты</h1><div className="journal-layout"><div ref={listRoot} className="journal-list" inert={!!editing && !desktop}>
     {balance && <><div className="journal-total panel"><span>{range ? 'За выбранный период' : !balance.hasIncome ? 'Потрачено' : balance.balance < 0 ? 'Перерасход' : balance.balance === 0 ? 'Остаток' : 'Осталось'}</span><div className="budget-amount"><strong data-testid="journal-total">{money(range || !balance.hasIncome ? spent : Math.abs(balance.balance))}</strong></div>{!range && balance.hasIncome && <><div className={`progress ${balance.percent! >= 100 ? 'danger' : balance.percent! >= 85 ? 'warning' : 'good'}`} role="progressbar" aria-label="Использовано бюджета" aria-valuenow={Math.round(balance.percent!)} aria-valuemin={0} aria-valuemax={Math.max(100, Math.round(balance.percent!))}><Progress value={balance.percent! / 100}/></div><p className="footnote">Потрачено {balance.percent!.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% дохода{balance.percent! >= 100 ? ' · Перерасход' : ''}</p>{balance.daily !== null && <p className="footnote">Можно тратить {money(Math.floor(balance.daily * 100) / 100)} в день</p>}</>}{!range && !balance.hasIncome && <button className="text-button" onClick={openSettings}>Укажите доходы в настройках</button>}</div>

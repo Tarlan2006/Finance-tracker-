@@ -48,7 +48,7 @@ export function useFinance() {
     if (!key || !owner || session.current !== key || document.hidden || Date.now() < readNotBefore.current) return;
     const request = ++sequence.current;
     try { const b = await api<Bootstrap>('bootstrap', key); if (session.current !== key || request !== sequence.current) return; readFailures.current = 0; readNotBefore.current = 0; setBootstrapRetry(0); setData(b); setTableState(''); storage.setItem(cacheKey(owner), JSON.stringify(b)); loadedMonths.current = new Set([today(b.tz).slice(0, 7)]); setError(''); }
-    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await expireSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); } else if (e instanceof ApiError && e.retryable) {
+    catch (e) { if (session.current === key && request === sequence.current) { if (e instanceof ApiError && e.status === 401) { await expireSession(); } else if (e instanceof ApiError && ['sheet_unlinked', 'table_uninitialized', 'schema_mismatch'].includes(e.code)) { setTableState(e.code); setData(null); storage.removeItem(cacheKey(owner)); setError(''); return; } else if (e instanceof ApiError && e.retryable) {
       const next = Date.now() + retryDelay(readFailures.current++, e.retryAfter);
       readNotBefore.current = Date.now() + e.retryAfter * 1000;
       setBootstrapRetry(next);

@@ -35,3 +35,19 @@ body{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-sel
 
 .login select{width:100%;margin-bottom:20px;min-height:48px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit}
 .account-form,.account-screen{max-width:640px;margin:auto}.account-form label{display:block;margin-top:18px}.account-form input{display:block;width:100%;margin-top:8px}.account-form .primary{margin-top:20px;width:100%}.session-row{padding:16px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.session-row:last-child{border-bottom:0}.session-row p{font-size:13px}.session-row button{display:block;margin-top:12px}.account-screen>.danger-action{margin-top:24px}.login>button{display:block;margin-top:16px;width:100%}
+
+/* Clear comparison and connection states on small screens. */
+.period-comparison{margin:var(--space-4) 0 var(--space-6)}
+.period-comparison h2{font-size:var(--font-sm);font-weight:500;color:var(--secondary)}
+.comparison-values{margin:var(--space-3) 0 0;font-size:var(--font-xs);color:var(--secondary)}
+.comparison-values>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:var(--space-2);margin-top:var(--space-2)}
+.comparison-values dd{margin:0;font-variant-numeric:tabular-nums;color:var(--text);overflow-wrap:anywhere;max-width:100%}
+.sync-panel .label-row{flex-wrap:wrap;align-items:baseline;gap:var(--space-2);margin-bottom:var(--space-2)}
+.sync-panel .label-row>span{min-width:0;overflow-wrap:anywhere}
+.connection-actions{display:grid;gap:var(--space-3)}
+.table-connection .text-button{justify-content:center}
+.add-toolbar h1{font-size:var(--font-heading);font-weight:500;margin:0}
+.category-emoji{display:grid;place-items:center;color:var(--secondary)}
+.category.selected .category-emoji{color:var(--accent)}
+.expense-emoji{color:var(--secondary)}
+.category-emoji .icon,.expense-emoji .icon{width:24px;height:24px}
