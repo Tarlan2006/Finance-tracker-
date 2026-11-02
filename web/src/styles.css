@@ -51,8 +51,8 @@ body{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-sel
 .add-toolbar h1{font-size:var(--font-heading);font-weight:500;margin:0}
 .category-emoji{display:grid;place-items:center;color:var(--secondary)}
 .category.selected .category-emoji{color:var(--accent)}
-.category-grid .category{--category-color:var(--accent);background:color-mix(in srgb,var(--category-color) 12%,var(--card));border-color:color-mix(in srgb,var(--category-color) 22%,var(--card));gap:8px}
-.category-grid .category-emoji{width:36px;height:36px;border-radius:12px;background:color-mix(in srgb,var(--category-color) 18%,var(--card));color:var(--category-color)}
+.category-grid .category{--category-color:var(--accent);background:color-mix(in srgb,var(--category-color) 12%,var(--card));border-color:color-mix(in srgb,var(--category-color) 22%,var(--card));gap:4px}
+.category-grid .category-emoji{width:28px;height:28px;border-radius:8px;background:color-mix(in srgb,var(--category-color) 18%,var(--card));color:var(--category-color)}
 .category-grid .category.selected{background:color-mix(in srgb,var(--category-color) 25%,var(--card));border-color:var(--category-color);box-shadow:inset 0 0 0 1px var(--category-color);color:var(--text)}
 .category-grid .category.selected .category-emoji{background:var(--category-color);color:var(--bg)}
 .category-grid .category.selected .category-label{font-weight:600}
