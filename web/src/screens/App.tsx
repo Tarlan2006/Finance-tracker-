@@ -40,11 +40,11 @@ export default function App() {
   useDialog(addDialog, addOpen && !!data && !duplicate, closeAdd);
   useDismissGesture(addDialog, addOpen && !!data && !duplicate, closeAdd);
   useDismissGesture(dialog, !!duplicate || logoutPrompt, cancelDialog);
-  useEffect(() => { const back = (event: PopStateEvent) => { setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => { setCompact(window.scrollY > 64); }; window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
+  useEffect(() => { const back = (event: PopStateEvent) => { finishScreenTransition(); setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => { setCompact(window.scrollY > 64); }; window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
   useEffect(() => { if (previousKey.current && !key) { setDraft({ amount: '', name: '', source: 'manual' }); setAddOpen(false); setLogoutPrompt(false); setTab(0); setFilter(null); history.replaceState({ tab: 0 }, '', location.pathname); } previousKey.current = key; }, [key]);
   useEffect(() => { if (key && data && tab === 0) void finance.loadMonths([month]); }, [key, !!data, tab, month, finance.loadMonths]);
   useEffect(() => { if (key && data) { try { sessionStorage.removeItem('pending-payment'); } catch { /* Optional draft persistence. */ } } }, [key, !!data]);
-  function navigate(next: number, search = false) { transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); if (search) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); window.scrollTo({ top: 0 }); }, Math.sign(next - tab)); }
+  function navigate(next: number, search = false) { transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); setCompact(false); if (search) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); window.scrollTo({ top: 0, behavior: 'instant' }); }); }
   function openAdd() { finishScreenTransition(); history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {

@@ -15,6 +15,48 @@ async function settled(page: Page) {
   await expect.poll(() => page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity).length)).toBe(0);
   await expect(page.locator('[data-motion-ghost]')).toHaveCount(0);
 }
+test('motion: mobile tabs fade in place over a stationary navigation bar', async ({ page }, info) => {
+  await page.setViewportSize({ width: 384, height: 750 });
+  await ready(page);
+  const nav = page.locator('.bottom-nav');
+  const before = await nav.boundingBox();
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(page.locator('.app-header')).toHaveClass(/compact/);
+  for (const title of ['Обзор', 'Ещё', 'Траты']) {
+    const frame = await nav.getByRole('button', { name: title, exact: true }).evaluate(button => {
+      (button as HTMLElement).click();
+      const main = document.querySelector<HTMLElement>('.main-content')!;
+      const fade = main.getAnimations().find(a => (a.effect as KeyframeEffect).getKeyframes().some(f => f.opacity !== undefined));
+      if (fade) {
+        fade.pause();
+        fade.currentTime = Number(fade.effect!.getTiming().duration) / 2;
+      }
+      return { title: main.querySelector('h1')?.textContent, scroll: scrollY, opacity: Number(getComputedStyle(main).opacity) };
+    });
+    expect(frame.title).toBe(title);
+    expect(frame.scroll).toBe(0);
+    expect(frame.opacity).toBeGreaterThan(0);
+    expect(frame.opacity).toBeLessThan(1);
+    expect(await nav.boundingBox()).toEqual(before);
+    await expect(page.locator('.app-header')).not.toHaveClass(/compact/);
+    if (title === 'Обзор') await page.screenshot({ path: info.outputPath('mobile-tab-midpoint.png'), scale: 'css' });
+    await page.locator('.main-content').evaluate(node => node.getAnimations().forEach(a => a.play()));
+    await settled(page);
+  }
+  await page.goBack();
+  await expect(page.locator('main h1')).toHaveText('Ещё');
+  const positions = await nav.evaluate(node => {
+    const buttons = node.querySelectorAll<HTMLButtonElement>('button');
+    return [0, 1, 2, 1, 0, 2, 0, 1].map(index => {
+      buttons[index].click();
+      const box = node.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width, height: box.height };
+    });
+  });
+  positions.forEach(box => expect(box).toEqual(before));
+  await settled(page);
+  await expect(page.locator('main h1')).toHaveText('Обзор');
+});
 test('motion: fast navigation, sheet interruption, retained draft and pointer drag', async ({ page }, info) => {
   await ready(page);
   const shot = (name: string) => page.screenshot({ path: `tests/screenshots/motion/${info.project.name}-${name}.png`, scale: 'css' });

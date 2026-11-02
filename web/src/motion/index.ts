@@ -31,18 +31,14 @@ export function useMotionLifecycle() {
     return () => { document.removeEventListener('visibilitychange', stop); media.removeEventListener('change', stop); active.forEach(a => a.cancel()); active.clear(); };
   }, []);
 }
-let transition: ViewTransition | undefined;
-let navigationRevision = 0;
-export function finishScreenTransition() { transition?.skipTransition(); }
-export function transitionScreen(update: () => void, direction = 1) {
-  const revision = ++navigationRevision;
-  transition?.skipTransition();
-  document.documentElement.style.setProperty('--motion-direction', String(direction || 1));
-  if (!document.startViewTransition || reducedMotion()) { flushSync(update); animate(document.querySelector('.main-content'), [{ opacity: 0 }, { opacity: 1 }]); return; }
-  const current = document.startViewTransition(() => { if (revision === navigationRevision) flushSync(update); }); transition = current;
-  // Skipping rejects ready, even though finished resolves. Handle both promises.
-  void current.ready.catch(() => {});
-  void current.finished.catch(() => {}).finally(() => { if (transition === current) transition = undefined; });
+let screenAnimation: Animation | undefined;
+export function finishScreenTransition() { screenAnimation?.cancel(); screenAnimation = undefined; }
+export function transitionScreen(update: () => void) {
+  finishScreenTransition();
+  // Commit navigation immediately. Only the live content fades, so fixed
+  // navigation and headings never become overlapping full-page snapshots.
+  flushSync(update);
+  screenAnimation = animate(document.querySelector('.main-content'), [{ opacity: .25 }, { opacity: 1 }]);
 }
 // Exit pixels are inert, aria-hidden and detached from layout. Data/focus updates
 // happen immediately; no action waits for the decorative animation to finish.
