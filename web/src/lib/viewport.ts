@@ -14,13 +14,13 @@ export function useVisualViewport() {
       if (keyboard) requestAnimationFrame(() => {
         const active = document.activeElement as HTMLElement | null;
         if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
-        const panel = document.querySelector<HTMLElement>('.save-bar');
+        const surface = active.closest<HTMLElement>('.modal, .scroll-surface') || window;
+        const panel = surface instanceof HTMLElement ? surface.querySelector<HTMLElement>('.save-bar') : null;
         const panelHeight = panel?.getBoundingClientRect().height || 0;
         const rect = active.getBoundingClientRect(), bottom = top + height - panelHeight - 12;
         const options = active.getAttribute('aria-controls');
         const suggestions = options ? document.getElementById(options) : null;
         const fieldBottom = rect.bottom + (suggestions ? suggestions.getBoundingClientRect().height + 4 : 0);
-        const surface = active.closest('.scroll-surface') || window;
         if (fieldBottom > bottom) surface.scrollBy(0, fieldBottom - bottom);
         else if (rect.top < top + 12) surface.scrollBy(0, rect.top - top - 12);
       });
