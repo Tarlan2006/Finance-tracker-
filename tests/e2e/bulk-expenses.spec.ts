@@ -4,6 +4,43 @@ import type { Bootstrap } from '../../shared/types';
 import { today } from '../../shared/dates';
 import { initMockSession, mockToken } from './auth';
 
+test('a stationary hold selects the first expense; a tap edits and scrolling cancels the hold', async ({ page, context }) => {
+  await initMockSession(page);
+  await page.goto('/');
+  const cards = page.locator('.day-card .expense-main');
+  const first = cards.first();
+  await first.tap();
+  const editor = page.getByRole('dialog', { name: 'Правка расхода' });
+  await expect(editor).toBeVisible();
+  await editor.getByRole('button', { name: 'Закрыть' }).tap();
+
+  const cdp = await context.newCDPSession(page);
+  async function pressFirst() {
+    await first.evaluate(node => node.scrollIntoView({ block: 'center' }));
+    const box = (await first.boundingBox())!;
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+    return point;
+  }
+  const fingerUp = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const point = await pressFirst();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y - 75 }] });
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 650)));
+  await fingerUp();
+  await expect(page.locator('.selection-tools')).toHaveCount(0);
+  await expect(editor).toHaveCount(0);
+
+  await pressFirst();
+  await expect(first).toHaveAttribute('aria-pressed', 'true'); // Before releasing the finger.
+  await fingerUp();
+  await expect(page.locator('.selection-tools strong')).toContainText('Выбрано: 1');
+  await expect(editor).toHaveCount(0);
+  await cards.nth(1).tap();
+  await expect(page.locator('.selection-tools strong')).toContainText('Выбрано: 2');
+  await first.tap();
+  await expect(first).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('select filtered expenses, edit shared fields, cancel or confirm a batch delete', async ({ page, request }, info) => {
   const headers = { 'X-App-Key': await mockToken(request) };
   const bootstrap = async (): Promise<Bootstrap> => (await request.get('/api/bootstrap', { headers })).json();

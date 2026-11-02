@@ -14,6 +14,7 @@ import BulkExpenseDialog from './BulkExpenseDialog';
 import CategoryIcon from './CategoryIcon';
 import { useMedia } from '../lib/media';
 import { useDismissGesture } from '../lib/gestures';
+import { useHoldToSelect } from '../lib/useHoldToSelect';
 import type { Bootstrap, BulkAction, Category, Expense } from '../../../shared/types';
 import type { Queued } from '../lib/queue';
 export default function Expenses({ data, openSettings, expenses: history, categories, queue, money, edit, changeSelected, remove, retry, editQueue, removeQueue, month, setMonth, range, clearRange, currentDay }: { data: Bootstrap | null; openSettings: () => void; expenses: Expense[]; categories: Category[]; queue: Queued[]; money: (n: number) => string; edit: (e: Expense, patch: Partial<Expense>) => Promise<void>; changeSelected: ChangeSelected; remove: (e: Expense) => void; retry: (q: Queued) => void; editQueue: (q: Queued, patch: Partial<Expense>) => Promise<void>; removeQueue: (q: Queued) => void; month: string; setMonth: (month: string) => void; range: JournalFilter | null; clearRange: () => void; currentDay: string }) {
@@ -41,6 +42,7 @@ export default function Expenses({ data, openSettings, expenses: history, catego
   useFlip(listRoot, `${month}|${list.map(e => e.row).join(',')}|${queue.map(q => q.id).join(',')}|${queueUndo.map(q => q.id).join(',')}`, '[data-motion-key]', true);
   const pending = list.filter(e => !e.category);
   const [selection, setSelection] = useState<Map<number, Expense> | null>(null);
+  const cardGesture = useHoldToSelect();
   const [bulk, setBulk] = useState<{ mode: BulkAction['action']; rows: Expense[] } | null>(null);
   const closeBulk = useCallback(() => setBulk(null), []);
   useEffect(() => { setSelection(null); setBulk(null); }, [month, range, search, filter]);
@@ -57,7 +59,10 @@ export default function Expenses({ data, openSettings, expenses: history, catego
   function row(e: Expense) {
     const checked = selection?.has(e.row);
     return <article className="expense-row" key={e.row} data-motion-key={`row:${e.row}`}>
-      <button className="expense-main" onClick={() => toggleRow(e)} aria-pressed={checked} aria-label={`${displayName(e)} · ${title(e.category)} · ${money(e.amount)} · в таблице`}>
+      <button className="expense-main" {...cardGesture(selection ? null : () => {
+        close();
+        setSelection(new Map([[e.row, e]]));
+      }, () => toggleRow(e))} aria-pressed={checked} aria-label={`${displayName(e)} · ${title(e.category)} · ${money(e.amount)} · в таблице`}>
         {selection ? <span className="journal-check" aria-hidden="true">{checked && <Icon name="check"/>}</span> : <span className="expense-emoji"><CategoryIcon name={e.category}/></span>}
         <span className="expense-description"><strong title={displayName(e)}>{displayName(e)}</strong><small>{title(e.category)}</small></span><strong className="expense-amount">{money(e.amount)}</strong>
       </button></article>;
