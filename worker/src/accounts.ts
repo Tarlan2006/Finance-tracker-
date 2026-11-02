@@ -1,3 +1,4 @@
+import { bodyLimit, bulkExpensePath } from './sheets';
 import { AppError } from '../../shared/logic';
 import type { AccountView } from '../../shared/accounts';
 import type { Env } from './env';
@@ -31,7 +32,8 @@ export class AccountsService {
     // Buffer the bounded incoming stream before queued work/early responses. A DO must not
     // leave a caller-owned stream unread after replying (e.g. logout or rate limiting).
     if (request.body) {
-      try { const reader = request.body.getReader(), chunks: Uint8Array[] = []; let length = 0; for (;;) { const { done, value } = await reader.read(); if (done) break; length += value.length; if (length > 16384) { await reader.cancel(); throw new AppError(413, 'body', 'Слишком большой запрос'); } chunks.push(value); } const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } request = new Request(request, { body: bytes }); } catch (e) { return errorResponse(e); }
+      const limit = bodyLimit(new URL(request.url).pathname);
+      try { const reader = request.body.getReader(), chunks: Uint8Array[] = []; let length = 0; for (;;) { const { done, value } = await reader.read(); if (done) break; length += value.length; if (length > limit) { await reader.cancel(); throw new AppError(413, 'body', 'Слишком большой запрос'); } chunks.push(value); } const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } request = new Request(request, { body: bytes }); } catch (e) { return errorResponse(e); }
     }
     const task = this.tail.then(async () => {
       const origin = request.headers.get('Origin'); if (origin && origin !== new URL(request.url).origin) return errorResponse(new AppError(403, 'origin', 'Запрос с другого сайта запрещён'));
@@ -98,6 +100,8 @@ export class AccountsService {
     if (path.startsWith('/api/account/sessions/') && method === 'DELETE') { const id = path.slice('/api/account/sessions/'.length); s.sessions = s.sessions.filter(x => x.accountId !== a.id || x.id !== id); return json({ ok: true }); }
     if (request.headers.has('X-FT-Expected-Sheet') && request.headers.get('X-FT-Expected-Sheet') !== a.sheetId) throw new AppError(409, 'sheet_changed', 'Привязка таблицы изменилась');
     if (!a.sheetId) throw new AppError(409, 'sheet_unlinked', 'Таблица ещё не подключена. Обратитесь к администратору');
+    if (path === bulkExpensePath && request.headers.get('X-FT-Sheet-Version') !== String(a.sheetVersion || 1))
+      throw new AppError(409, 'sheet_changed', 'Привязка таблицы изменилась. Откройте журнал заново.');
     if (path === '/api/expenses' && method === 'POST' && (request.headers.get('X-FT-Sheet-Version') || '1') !== String(a.sheetVersion || 1)) {
       throw new AppError(409, 'sheet_changed', 'Таблица была заменена. Эта трата сохранена для прежней таблицы. Проверьте её и при необходимости создайте новую запись.');
     }

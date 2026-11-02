@@ -2,12 +2,68 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Api } from '../../worker/src/router';
 import { MockSheetsAdapter } from '../../worker/src/mock-sheets';
 import type { Env } from '../../worker/src/env';
+import type { Expense } from '../../shared/types';
 import { today } from '../../shared/logic';
 export const testEnv: Env = { APP_KEY: 'test-key-only', USE_MOCK: '1', TZ: 'Asia/Almaty', CURRENCY: '₸', DUPLICATE_WINDOW_MIN: '3', SHEET_NAME_EXPENSES: 'Ввод данных', SHEET_NAME_DICT: 'Справочник', SHEET_NAME_INCOME: 'Доходы и расходы' };
 let api: Api, mock: MockSheetsAdapter;
 beforeEach(() => { mock = new MockSheetsAdapter(); api = new Api(testEnv, mock); });
 function request(path: string, method = 'GET', body?: unknown, key = 'test-key-only') { return api.fetch(new Request(`https://app.test/api/${path}`, { method, headers: { 'X-App-Key': key, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })); }
 const input = () => ({ id: `${Date.now()}-${crypto.randomUUID()}`, date: today('Asia/Almaty'), amount: 1200, category: '🍔 Продукты и супермаркеты', source: 'manual' });
+describe('bulk expense changes', () => {
+  async function targets() {
+    const data = await (await request('bootstrap')).json();
+    return (data.history as Expense[]).slice(0, 2).map(({ row, fp }) => ({ row, fp }));
+  }
+  const bulk = (body: unknown) => request('expenses/bulk', 'POST', body);
+  it('changes only selected fields, including clearing comments, and preserves raw formulas and legacy IDs', async () => {
+    mock.rows[1][6] = '';
+    const before = structuredClone(mock.rows);
+    const selected = await targets();
+    expect((await bulk({ action: 'edit', targets: selected, patch: { name: 'Общее', comment: '' } })).status).toBe(200);
+    for (const t of selected) { before[t.row - 1][1] = 'Общее'; before[t.row - 1][4] = ''; }
+    expect(mock.rows).toEqual(before);
+  });
+  it.each(['edit','delete'])('stale fingerprint blocks the entire %s before the first write', async action => {
+    const selected = await targets();
+    mock.rows[selected[1].row - 1][4] = 'Изменение вручную';
+    const r = await bulk({ action, targets: selected, patch: { amount: 1 } });
+    expect(r.status).toBe(409); expect((await r.json()).error).toBe('conflict');
+    expect(mock.writes).toEqual([]);
+  });
+  it('requires a fresh matching preview for category changes and previews never write', async () => {
+    const selected = await targets();
+    const data = await (await request('bootstrap')).json();
+    const group = { action: 'edit', targets: selected, patch: { category: data.categories[1].name } };
+    const preview = await (await request('expenses/bulk?dry=1', 'POST', group)).json();
+    expect(typeof preview.previewHash).toBe('string');
+    expect((await bulk(group)).status).toBe(409);
+    expect((await bulk({ ...group, targets: selected.slice(1), previewHash: preview.previewHash })).status).toBe(409);
+    expect(mock.writes).toEqual([]);
+    expect((await bulk({ ...group, previewHash: preview.previewHash })).status).toBe(200);
+    expect((await bulk({ ...group, previewHash: preview.previewHash })).status).toBe(409);
+  });
+  it('rejects malformed selections, forbidden fields and invalid new values without writing', async () => {
+    const selected = await targets();
+    for (const patch of [{}, { id: 'override' }, { amount: -5 }, { category: 'missing' }, { date: '3000-01-01' }])
+      expect((await bulk({ action: 'edit', targets: selected, patch })).status).toBe(422);
+    for (const bad of [[], [selected[0], selected[0]], [{ row: 1, fp: 'header' }]])
+      expect((await bulk({ action: 'delete', targets: bad })).status).toBe(422);
+    mock.rows[0][1] = '';
+    expect((await bulk({ action: 'delete', targets: selected })).status).toBe(409);
+    expect(mock.writes).toEqual([]);
+  });
+  it('confirms a lost batch clear response once and leaves every F cell and other row intact', async () => {
+    const selected = await targets(), before = structuredClone(mock.rows);
+    const clear = mock.clearMany.bind(mock); let calls = 0;
+    mock.clearMany = async rows => { calls++; await clear(rows); throw new Error('lost response'); };
+    const r = await bulk({ action: 'delete', targets: selected });
+    expect(await r.json()).toEqual({ count: 2 }); expect(calls).toBe(1);
+    for (const { row } of selected) before[row - 1] = ['', '', '', '', '', before[row - 1][5] ?? '', '', ''];
+    expect(mock.rows).toEqual(before);
+    expect((await bulk({ action: 'delete', targets: selected })).status).toBe(409);
+    expect(calls).toBe(1);
+  });
+});
 describe('API', () => {
   it('health требует ключ и не читает таблицу', async () => { mock.read = async () => { throw new Error(); }; expect((await request('health')).status).toBe(200); expect((await request('health', 'GET', undefined, 'wrong')).status).toBe(401); });
   it('10 ошибок, 429', async () => { for (let i = 0; i < 9; i++) expect((await request('health', 'GET', undefined, 'bad')).status).toBe(401); expect((await request('health', 'GET', undefined, 'bad')).status).toBe(429); expect((await request('health')).status).toBe(429); });

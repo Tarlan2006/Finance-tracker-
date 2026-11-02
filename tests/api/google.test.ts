@@ -56,6 +56,13 @@ describe('Google auth and transport', () => {
     await adapter.clear(157);
     expect(calls[2].body).toEqual({ valueInputOption: 'RAW', data: [{ range: "'Ввод данных'!A157:E157", values: [[46325, '=EVIL()', 'еда', 1200, '+cmd']] }, { range: "'Ввод данных'!G157:H157", values: [['1793332800000-testtest', 'manual']] }] });
     expect(calls[3].body).toEqual({ ranges: ["'Ввод данных'!A157:E157", "'Ввод данных'!G157:H157"] });
+    const before = { id: '', date: '2026-10-30', amount: 1200, name: 'Кофе', comment: '', category: 'еда', source: 'manual' };
+    await adapter.updateMany([2, 9].map(row => ({ row, before, after: { ...before, comment: '=RAW()' } })));
+    await adapter.clearMany([2, 9]);
+    expect(calls.slice(4).map(c => c.body)).toEqual([
+      { valueInputOption: 'RAW', data: [2, 9].map(row => ({ range: "'Ввод данных'!E" + row, values: [['=RAW()']] })) },
+      { ranges: ["'Ввод данных'!A2:E2", "'Ввод данных'!G2:H2", "'Ввод данных'!A9:E9", "'Ввод данных'!G9:H9"] },
+    ]);
     await expect(adapter.clear(1)).rejects.toThrow();
   });
 });

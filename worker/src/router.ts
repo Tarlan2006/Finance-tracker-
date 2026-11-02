@@ -9,7 +9,8 @@ import { securityHeaders } from './headers';
 import { ConfigApi } from './config-api';
 import { configCategories } from '../../shared/config';
 import { MemoryOperations, type OperationStorage } from './config-store';
-import { checkExpenseHeaders } from './sheets';
+import { bulkExpenses } from './bulk-expenses';
+import { bodyLimit, bulkExpensePath, checkExpenseHeaders } from './sheets';
 import type { TablePreparation } from './prepare-table';
 export const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 export function errorResponse(error: unknown) {
@@ -63,9 +64,10 @@ export class Api {
     return s;
   }
   private async body(request: Request): Promise<Record<string, unknown>> {
-    if (Number(request.headers.get('Content-Length') || 0) > 16384) throw new AppError(413, 'body', 'Слишком большой запрос');
+    const limit = bodyLimit(new URL(request.url).pathname);
+    if (Number(request.headers.get('Content-Length') || 0) > limit) throw new AppError(413, 'body', 'Слишком большой запрос');
     const text = await request.text();
-    if (text.length > 16384) throw new AppError(413, 'body', 'Слишком большой запрос');
+    if (text.length > limit) throw new AppError(413, 'body', 'Слишком большой запрос');
     try { const value = JSON.parse(text); if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(); return value; } catch { throw new AppError(422, 'json', 'Неверный JSON'); }
   }
   private async create(body: unknown, s: Snapshot, allowPending = false) {
@@ -104,17 +106,20 @@ export class Api {
       const status = await this.preparation.status(method !== 'GET'); if (status.native) this.env.NATIVE_TABLE = '1';
       if (!status.ready) throw new AppError(409, 'table_uninitialized', 'Таблица подключена, но пуста');
     }
-    const journal = ['/api/bootstrap','/api/expenses','/api/export.csv','/api/quick'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
+    const journal = ['/api/bootstrap','/api/expenses','/api/export.csv','/api/quick',bulkExpensePath].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
     if (journal) await this.adapter.primeJournal?.(method === 'GET', this.config.cachedConfigured());
     checkExpenseHeaders(await this.adapter.readHeaders(method === 'GET'));
     if (path === '/api/config' && method === 'GET') return json(await this.config.read());
     if (path === '/api/config/setup' && method === 'POST') { if (url.searchParams.has('dry')) throw new AppError(422, 'dry', 'Предпросмотр доступен только для категорий'); return json(await this.config.setup()); }
     if (path.startsWith('/api/config/') && (method === 'POST' || method === 'PATCH')) return json(await this.config.mutate(path, await this.body(request), url.searchParams.get('dry') === '1'));
-    const known = ['/api/bootstrap', '/api/expenses', '/api/quick', '/api/export.csv'].includes(path) || /^\/api\/expenses\/\d+$/.test(path);
-    if (!known) throw new AppError(404, 'not_found', 'Маршрут не найден');
+    if (!journal) throw new AppError(404, 'not_found', 'Маршрут не найден');
     const invalidDateRows: number[] = [];
     const invalidAmountRows: number[] = [];
     const s = await this.snapshot(), history = expensesFromRows(s.rows, invalidDateRows, invalidAmountRows);
+    if (path === bulkExpensePath && method === 'POST') {
+      const scope = [request.headers.get('X-FT-Account') || '', this.env.SHEET_ID || ''];
+      return json(await bulkExpenses(await this.body(request), history, s, this.adapter, this.operations, this.env.TZ, url.searchParams.get('dry') === '1', scope));
+    }
     const month = validMonth(url.searchParams.get('month') || today(this.env.TZ).slice(0, 7));
     const expenses = history.filter(e => e.date.startsWith(month));
     if (method === 'GET' && path === '/api/bootstrap') return json({ invalidDateRows, invalidAmountRows, freeRows: 1005 - s.rows.slice(1, 1006).filter(row => [0,1,2,3,4,6,7].some(i => row[i] != null && row[i] !== '')).length, categories: s.categories, config: await this.config.read(), expenses, history, summaries: s.summaries, summary: s.summaries.find(x => x.month === month) || null, tz: this.env.TZ, currency: this.env.CURRENCY, duplicateWindow: Number(this.env.DUPLICATE_WINDOW_MIN) || 3, mock: isMock(this.env) });

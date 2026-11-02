@@ -8,6 +8,9 @@ export function checkExpenseHeaders(row: Row | undefined) {
   }
 }
 export const expenseColumns = ['date','name','category','amount','comment',null,'id','source'] as const;
+export interface RowEdit { row: number; before: ExpenseInput; after: ExpenseInput }
+export const bulkExpensePath = '/api/expenses/bulk';
+export const bodyLimit = (path: string) => path === bulkExpensePath ? 2 * 1024 * 1024 : 16384;
 export interface SheetsAdapter extends ConfigStorage {
   read(legacy?: boolean): Promise<Snapshot>;
   primeJournal?(readOnly: boolean, configured?: boolean): Promise<void>;
@@ -17,4 +20,6 @@ export interface SheetsAdapter extends ConfigStorage {
   readRow(row: number): Promise<Row>;
   write(row: number, expense: ExpenseInput, previous?: ExpenseInput): Promise<void>;
   clear(row: number): Promise<void>;
+  updateMany(edits: RowEdit[]): Promise<void>;
+  clearMany(rows: number[]): Promise<void>;
 }

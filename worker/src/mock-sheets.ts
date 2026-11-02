@@ -1,7 +1,7 @@
 import { calendarDate } from '../../shared/dates';
 import { fromDateCell, serialDate, shiftMonth, today } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot } from '../../shared/types';
-import { expenseColumns, type SheetsAdapter } from './sheets';
+import { expenseColumns, type RowEdit, type SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const mockCategories: Category[] = [
   ['🍔 Продукты и супермаркеты', 60000], ['☕ Кафе и рестораны', 40000], ['🚗 Транспорт и такси', 20000],
@@ -60,6 +60,14 @@ export class MockSheetsAdapter implements SheetsAdapter {
     }
     this.rows[row - 1] = [serialDate(e.date), e.name, e.category, e.amount, e.comment, old[5] ?? '', e.id, e.source];
     this.writes.push({ row, ranges: [`A${row}:E${row}`, `G${row}:H${row}`] });
+  }
+  async updateMany(edits: RowEdit[]) {
+    for (const edit of edits) this.assertRow(edit.row);
+    for (const { row, before, after } of edits) await this.write(row, after, before);
+  }
+  async clearMany(rows: number[]) {
+    for (const row of rows) this.assertRow(row);
+    for (const row of rows) await this.clear(row);
   }
   async clear(row: number) { this.assertRow(row); const old = this.rows[row - 1] || []; this.rows[row - 1] = ['', '', '', '', '', old[5] ?? '', '', '']; this.writes.push({ row, ranges: [`A${row}:E${row}`, `G${row}:H${row}`] }); }
   private assertRow(row: number) { if (!Number.isInteger(row) || row < 2) throw new Error('Нельзя менять заголовки'); }

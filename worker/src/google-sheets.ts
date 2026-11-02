@@ -2,7 +2,7 @@ import { AppError, clean, serialDate } from '../../shared/logic';
 import type { Category, ExpenseInput, Row, Snapshot, Summary } from '../../shared/types';
 import type { Env } from './env';
 import { GoogleAuth, retryFetch } from './google-auth';
-import { checkExpenseHeaders, expenseColumns, type SheetsAdapter } from './sheets';
+import { checkExpenseHeaders, expenseColumns, type RowEdit, type SheetsAdapter } from './sheets';
 import { CATEGORY_SHEET, ITEM_SHEET, verifyPlan, type ConfigPlan, type ConfigTables } from './config-store';
 export const quoteSheet = (name: string) => `'${name.replace(/'/g, "''")}'`;
 export class GoogleSheetsAdapter implements SheetsAdapter {
@@ -106,19 +106,25 @@ export class GoogleSheetsAdapter implements SheetsAdapter {
   }
   async write(row: number, e: ExpenseInput, previous?: ExpenseInput) {
     const [first, last] = this.ranges(row);
-    if (previous) {
-      const data = expenseColumns.flatMap((key, index) => {
-        if (!key || previous[key] === e[key]) return [];
-        const cell = String.fromCharCode(65 + index) + row;
-        return [{ range: quoteSheet(this.env.SHEET_NAME_EXPENSES) + '!' + cell, values: [[key === 'date' ? serialDate(e.date) : e[key]]] }];
-      });
-      if (data.length) await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
-      return;
-    }
+    if (previous) return this.updateMany([{ row, before: previous, after: e }]);
     // RAW preserves text verbatim and the numeric Sheets date serial; never evaluates user strings.
     await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: first, values: [[serialDate(e.date), e.name, e.category, e.amount, e.comment]] }, { range: last, values: [[e.id, e.source]] }] }) });
   }
-  async clear(row: number) { await this.request('values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: this.ranges(row) }) }); }
+  async updateMany(edits: RowEdit[]) {
+    const data = edits.flatMap(({ row, before, after }) => {
+      this.ranges(row);
+      return expenseColumns.flatMap((key, index) => {
+        if (!key || before[key] === after[key]) return [];
+        const cell = String.fromCharCode(65 + index) + row;
+        return [{ range: quoteSheet(this.env.SHEET_NAME_EXPENSES) + '!' + cell, values: [[key === 'date' ? serialDate(after.date) : after[key]]] }];
+      });
+    });
+    if (data.length) await this.request('values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
+  }
+  async clear(row: number) { await this.clearMany([row]); }
+  async clearMany(rows: number[]) {
+    await this.request('values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: rows.flatMap(row => this.ranges(row)) }) });
+  }
   async metadata(fresh = false) {
     if (!fresh && this.catalog && this.catalog.until > Date.now()) return this.catalog.sheets;
     const sheets = (await this.request('?fields=sheets.properties(sheetId,title,gridProperties.rowCount)')).sheets || [];

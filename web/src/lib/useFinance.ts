@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { looksDuplicate, today, validateExpense } from '../../../shared/logic';
-import type { Bootstrap, Config, ConfigItem, Expense, ExpenseInput } from '../../../shared/types';
+import type { Bootstrap, BulkAction, Config, ConfigItem, Expense, ExpenseInput } from '../../../shared/types';
 import { configCategories } from '../../../shared/config';
 import { api, ApiError } from './api';
 import type { AccountSession, AccountView } from '../../../shared/accounts';
@@ -174,6 +174,24 @@ export function useFinance() {
     await enqueue(e, owner); if (session.current !== key) return false; setQueue(await allQueued(owner)); notify(navigator.onLine ? 'Сохранено · отправляется в таблицу' : 'Сохранено в очередь'); void sync(); return true;
   }
   async function edit(e: Expense, patch: Partial<Expense>) { await api(`expenses/${e.row}`, key, { method: 'PATCH', body: JSON.stringify({ ...patch, fp: e.fp }) }); await reload(); notify('Изменения сохранены'); }
+  async function changeSelected(selected: Expense[], action: BulkAction, options: { dry?: boolean; previewHash?: string } = {}) {
+    if (!navigator.onLine) throw new Error('Для изменения записей в таблице нужен интернет');
+    const targets = selected.map(({ row, fp }) => ({ row, fp }));
+    try {
+      const result = await api<{ count: number; previewHash?: string }>(options.dry ? 'expenses/bulk?dry=1' : 'expenses/bulk', key, {
+        method: 'POST', headers: { 'X-FT-Sheet-Version': String(accountSession?.account.sheetVersion || 1) },
+        body: JSON.stringify({ ...action, targets, previewHash: options.previewHash }),
+      });
+      if (result.count !== targets.length) throw new Error('Сервер не подтвердил все записи. Проверьте журнал.');
+      if (!options.dry && session.current === key) notify(`${action.action === 'delete' ? 'Удалено' : 'Изменено'} трат: ${targets.length}`);
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.code !== 'invalid_response') throw error;
+      throw new Error('Не удалось подтвердить результат. Проверьте журнал перед повторной попыткой.', { cause: error });
+    } finally {
+      if (!options.dry && session.current === key) await reload();
+    }
+  }
   async function changeConfig(path: string, body: Record<string, unknown>): Promise<{ config?: Config; count?: number; previewHash?: string }> {
     if (session.current !== key) throw new Error('Войдите заново');
     const result = await api<Config | { config?: Config; count?: number; previewHash?: string }>(path, key, { method: 'POST', body: JSON.stringify(body) });
@@ -189,7 +207,7 @@ export function useFinance() {
   function undo(e: Expense) { clearTimeout(timers.current.get(e.row)); timers.current.delete(e.row); setDeletions(items => items.filter(x => x.row !== e.row)); }
   async function logout() { try { try { await accountApi('logout', key, {}); } catch (e) { if (!(e instanceof ApiError && e.status === 401)) throw e; } await setQueueKey(''); if (!storage.removeItem('app-key') || !storage.removeItem('account-session')) throw new Error(); storage.keys().filter(k => k.startsWith('bootstrap-')).forEach(k => storage.removeItem(k)); closeSession(); setError(''); return true; } catch { setError('Для безопасного выхода нужна сеть. Очередь сохранена; подключитесь и повторите'); return false; } }
   async function exportCsv(month: string) { try { const r = await fetch(`/api/export.csv?month=${month}`, { headers: { 'X-App-Key': key } }); if (!r.ok || !r.headers.get('Content-Type')?.includes('text/csv')) throw new Error('Экспорт недоступен. Проверьте сеть и код доступа'); const url = URL.createObjectURL(await r.blob()), a = document.createElement('a'); a.href = url; a.download = `finance-tracker-${month}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { showError(e); } }
-  return { key, keyInput, setKeyInput, accounts, loginName, setLoginName, account: accountSession?.account, changePassword, tableState, prepareTable, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, lastSync, error, toast, loading, duplicate, setDuplicate, deletions, itemDeletions, undoItem, undo, login, logout, save, edit, remove, reload, sync, exportCsv, loadMonths, changeConfig, removeItem,
+  return { key, keyInput, setKeyInput, accounts, loginName, setLoginName, account: accountSession?.account, changePassword, tableState, prepareTable, data: data ? { ...data, history: data.history.filter(e => !deletions.some(d => d.row === e.row)) } : null, queue, online, lastSync, error, toast, loading, duplicate, setDuplicate, deletions, itemDeletions, undoItem, undo, login, logout, save, edit, changeSelected, remove, reload, sync, exportCsv, loadMonths, changeConfig, removeItem,
     retry: (q: Queued) => void retryQueued(q).then(() => sync(true)).catch(showError), removeQueue: (q: Queued) => void discardQueued(q).then(() => sync()).catch(showError),
     editQueue: async (q: Queued, patch: Partial<Expense>) => { const expense = validateExpense({ ...q.expense, ...patch }, data?.categories ?? [{name: q.expense.category, limit: 0}], data?.tz || 'Asia/Almaty'); await changeQueued(q, expense); await sync(); }
   };

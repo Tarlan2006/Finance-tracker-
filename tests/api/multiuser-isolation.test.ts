@@ -9,7 +9,7 @@ const env: Env = { APP_KEY: 'fictional-integration-password', ADMIN_TOKEN: 'fict
 it('isolates every data route, overrides spoofed routing and does not serialize unrelated tables', async () => {
   const actors = new Map<string, { api: Api; mock: MockSheetsAdapter }>();
   const service = new AccountsService(new MemoryOperations(), { ...env, COORDINATOR: { idFromName: name => name, get: id => ({ fetch: async r => { const key = String(id); if (!actors.has(key)) { const mock = new MockSheetsAdapter(); actors.set(key, { mock, api: new Api(env, mock) }); } return actors.get(key)!.api.fetchAccount(r); } }) } });
-  const call = (path: string, token = '', body?: unknown, method = body ? 'POST' : 'GET') => service.fetch(new Request(`https://app.test/api/${path}`, { method, headers: { 'X-App-Key': token, Authorization: token === 'admin' ? 'Bearer fictional-admin' : '', 'X-FT-Account': 'tarlan', 'X-FT-Sheet': 'mock-tarlan-table-0000000000', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }));
+  const call = (path: string, token = '', body?: unknown, method = body ? 'POST' : 'GET', version?: string) => service.fetch(new Request(`https://app.test/api/${path}`, { method, headers: { ...(version ? { 'X-FT-Sheet-Version': version } : {}), 'X-App-Key': token, Authorization: token === 'admin' ? 'Bearer fictional-admin' : '', 'X-FT-Account': 'tarlan', 'X-FT-Sheet': 'mock-tarlan-table-0000000000', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }));
   const login = async (login: string, password: string) => (await (await call('login', '', { login, password })).json()).token;
   const a = await login('tarlan', 'fictional-integration-password');
   await call('admin/add', 'admin', { login: 'aru', displayName: 'Aru', password: 'fictional-aru-password' }); await call('admin/set-sheet', 'admin', { login: 'aru', sheet: 'fictional-aru-table-000000' });
@@ -21,6 +21,15 @@ it('isolates every data route, overrides spoofed routing and does not serialize 
   const saved = await (await call('expenses', b, expense)).json(); expect(ta.mock.rows).toEqual(original); expect(tb.mock.writes).toHaveLength(1);
   expect((await call(`expenses/2`, b, { fp: 'tarlan-fingerprint', name: 'Attack' }, 'PATCH')).status).toBe(409);
   expect((await call(`expenses/${saved.expense.row}`, b, { fp: saved.expense.fp }, 'DELETE')).status).toBe(200);
+  const rows = (await (await call('bootstrap', b)).json()).history.slice(0, 2);
+  const group = { action: 'edit', targets: rows.map(({ row, fp }: { row: number; fp: string }) => ({ row, fp })), patch: { comment: 'Только Aru' } };
+  const beforeBulk = structuredClone(tb.mock.rows);
+  expect((await call('expenses/bulk', b, group, 'POST', '99')).status).toBe(409);
+  expect(tb.mock.rows).toEqual(beforeBulk);
+  expect((await call('expenses/bulk', '', group, 'POST', '1')).status).toBe(401);
+  expect((await call('expenses/bulk', b, group, 'POST', '1')).status).toBe(200);
+  expect(tb.mock.rows[1][4]).toBe('Только Aru');
+  expect(ta.mock.rows).toEqual(original);
   await call('config/setup', b, {}); expect(ta.mock.tables.categories).toBeNull(); expect(tb.mock.tables.categories).not.toBeNull(); expect(tb.mock.rows.map(r => r[5])).toEqual(f); expect(ta.mock.rows).toEqual(original);
   let release!: () => void; const old = ta.mock.read.bind(ta.mock); ta.mock.read = async () => { await new Promise<void>(r => { release = r; }); return old(); };
   const waiting = call('bootstrap', a); while (!release) await new Promise(r => setTimeout(r, 1));

@@ -4,6 +4,8 @@ export interface ConfigItem { id: string; kind: 'income' | 'fixed'; name: string
 export interface Config { configured: boolean; categories: ConfigCategory[]; items: ConfigItem[]; version: string }
 export interface ExpenseInput { id: string; date: string; amount: number; category: string; name: string; comment: string; source: string }
 export interface Expense extends ExpenseInput { row: number; fp: string }
+export type ExpensePatch = Partial<Pick<ExpenseInput, 'date' | 'name' | 'category' | 'amount' | 'comment'>>;
+export type BulkAction = { action: 'edit'; patch: ExpensePatch } | { action: 'delete' };
 export interface Summary { month: string; income: number; fixed: number; journal: number; total: number; balance: number; savings: number }
 export interface Suggestion { name: string; category: string; confidence: number }
 export interface Bootstrap { invalidDateRows?: number[]; invalidAmountRows?: number[]; freeRows?: number; categories: Category[]; config?: Config; expenses: Expense[]; history: Expense[]; summaries: Summary[]; summary: Summary | null; tz: string; currency: string; duplicateWindow: number; mock: boolean }
