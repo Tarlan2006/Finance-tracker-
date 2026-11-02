@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { clean, parseAmount, shiftDate, suggestion, today } from '../../../shared/logic';
 import type { Bootstrap, ExpenseInput } from '../../../shared/types';
-import { categoryTitle } from '../../../shared/analytics';
+import { categoryTitle, colorIndex } from '../../../shared/analytics';
 import { animate, duration, reducedMotion, token } from '../motion';
 import Icon from './Icon';
 import CategoryIcon from './CategoryIcon';
@@ -56,8 +56,8 @@ export default function Add({ data, draft, save, money }: { data: Bootstrap; dra
     {source !== 'manual' && <div className="payment-note">Из платежа · {source} <span>Проверьте и сохраните</span></div>}
     <div className="amount-card"><label htmlFor="amount">Сколько потратили?</label><div className="amount-line"><input id="amount" aria-label="Сумма" value={amount || '0'} readOnly inputMode="none"/><span>{data.currency}</span></div><div className="amount-caption">{amount.includes('+') ? `Итого: ${money(total)}` : 'В тенге. Название можно не указывать.'}</div></div>
     <div className="keypad" aria-label="Цифровая клавиатура">{['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '000', '+', '⌫'].map(key => <button key={key} type="button" aria-label={key === '⌫' ? 'Стереть цифру' : key === ',' ? 'Запятая' : key === '+' ? 'Плюс' : key} className={key === '⌫' ? 'backspace' : ''} onClick={() => setAmount(v => key === '⌫' ? v.slice(0, -1) : (v + key).slice(0, 32))}>{key === '⌫' ? <Icon name="erase"/> : key === '+' ? <Icon name="plus"/> : key}</button>)}</div>
-    <div className="label-row"><h2>Категория</h2><span>{category ? 'Выбрана ✓' : 'Выберите одну'}</span></div>
-    <div className="category-grid">{categories.map(c => <button type="button" key={c.name} className={category === c.name ? 'category selected' : 'category'} aria-pressed={category === c.name} aria-label={c.name} title={c.name} onClick={() => { setCategory(c.name); setError(''); }}><span className="category-emoji"><CategoryIcon name={c.name}/></span><span className="category-label">{categoryTitle(c.name)}</span></button>)}</div>
+    <div className="label-row"><h2>Категория</h2><span>{category ? categoryTitle(category) + ' ✓' : 'Выберите одну'}</span></div>
+    <div className="category-grid">{categories.map(c => <button type="button" key={c.name} style={{ '--category-color': `var(--chart-${colorIndex(c.name)})` } as CSSProperties} className={category === c.name ? 'category selected' : 'category'} aria-pressed={category === c.name} aria-label={c.name} title={c.name} onClick={() => { setCategory(c.name); setError(''); }}><span className="category-emoji"><CategoryIcon name={c.name}/></span><span className="category-label">{categoryTitle(c.name)}</span></button>)}</div>
     <NameInput value={name} onChange={applyName} history={activeHistory}/>
     <div className="date-row"><button aria-pressed={dateMode === 'today'} className={dateMode === 'today' ? 'chip active' : 'chip'} onClick={() => { setDateMode('today'); setDate(today(data.tz)); }}>Сегодня</button><button aria-pressed={dateMode === 'yesterday'} className={dateMode === 'yesterday' ? 'chip active' : 'chip'} onClick={() => { setDateMode('yesterday'); setDate(shiftDate(today(data.tz), -1)); }}>Вчера</button><input aria-label="Дата расхода" type="date" value={date} max={shiftDate(today(data.tz), 1)} onChange={e => { setDateMode('custom'); setDate(e.target.value); }}/></div>
     {dateMode !== 'today' && <p className="date-notice" role="status">Дата записи: {date} · {dateMode === 'yesterday' ? 'выбрано «Вчера»' : 'выбрана вручную'}</p>}
