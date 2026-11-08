@@ -7,9 +7,10 @@ import { useAppearance } from '../lib/appearance';
 import { useVisualViewport } from '../lib/viewport';
 import { useDialog } from '../lib/dialog';
 import { useDismissGesture } from '../lib/gestures';
+import { acceptPaymentLink, emptyDraft, forgetPendingPayment, pendingPayment, readPaymentLink } from '../lib/payment-link';
 import { exitSnapshot, finishScreenTransition, transitionScreen, useEnter, useMotionLifecycle } from '../motion';
 import Presence from '../motion/Presence';
-import Add, { type Draft } from './Add';
+import Add from './Add';
 import Expenses from './Expenses';
 import Overview from './Overview';
 import More from './More';
@@ -19,14 +20,14 @@ import { PasswordForm } from './Account';
 import Icon, { type IconName } from './Icon';
 const currencyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const tabs: { name: string; icon: IconName }[] = [{ name: 'Траты', icon: 'expenses' }, { name: 'Обзор', icon: 'overview' }, { name: 'Ещё', icon: 'more' }];
-function readDraft(): Draft & { open: boolean } { const p = new URLSearchParams(location.search), open = p.has('amount') || p.has('merchant'); let draft = { amount: p.get('amount') || '', name: p.get('merchant') || '', source: p.get('src') || 'manual', ts: p.has('ts') ? Number(p.get('ts')) * 1000 : undefined, open }; try { if (open) sessionStorage.setItem('pending-payment', JSON.stringify(draft)); else { const saved = JSON.parse(sessionStorage.getItem('pending-payment') || 'null'); if (saved && typeof saved.amount === 'string' && typeof saved.name === 'string') draft = saved; } } catch { /* In-memory draft still works if session storage is unavailable. */ } if (open) history.replaceState({ tab: 0, add: true }, '', location.pathname); return draft; }
-const initialDraft = readDraft();
 export default function App() {
   useVisualViewport(); useMotionLifecycle();
   const finance = useFinance(), { key, data, queue, online, error, toast, duplicate, setDuplicate } = finance;
   const { theme, setTheme } = useAppearance(finance.account?.id);
-  const [tab, setTab] = useState<number>(history.state?.tab || 0), [addOpen, setAddOpen] = useState(initialDraft.open || !!history.state?.add);
-  const [draft, setDraft] = useState<Draft>(initialDraft), [month, setMonth] = useState(today('Asia/Almaty').slice(0, 7)), [filter, setFilter] = useState<JournalFilter | null>(null);
+  const [draft, setDraft] = useState(() => pendingPayment() || emptyDraft);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const [tab, setTab] = useState<number>(history.state?.tab || 0), [addOpen, setAddOpen] = useState(draft !== emptyDraft || !!history.state?.add);
+  const [month, setMonth] = useState(today('Asia/Almaty').slice(0, 7)), [filter, setFilter] = useState<JournalFilter | null>(null);
   const [feedbackHost, setFeedbackHost] = useState<HTMLDivElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [compact, setCompact] = useState(false), [logoutPrompt, setLogoutPrompt] = useState(false);
@@ -41,9 +42,43 @@ export default function App() {
   useDismissGesture(addDialog, addOpen && !!data && !duplicate, closeAdd);
   useDismissGesture(dialog, !!duplicate || logoutPrompt, cancelDialog);
   useEffect(() => { const back = (event: PopStateEvent) => { finishScreenTransition(); setTab(event.state?.tab || 0); setAddOpen(!!event.state?.add); }, scroll = () => { setCompact(window.scrollY > 64); }; window.addEventListener('popstate', back); window.addEventListener('scroll', scroll, { passive: true }); return () => { window.removeEventListener('popstate', back); window.removeEventListener('scroll', scroll); }; }, []);
-  useEffect(() => { if (previousKey.current && !key) { setDraft({ amount: '', name: '', source: 'manual' }); setAddOpen(false); setLogoutPrompt(false); setTab(0); setFilter(null); history.replaceState({ tab: 0 }, '', location.pathname); } previousKey.current = key; }, [key]);
+  useEffect(() => {
+    if (previousKey.current && !key) {
+      const pending = pendingPayment();
+      setDraft(pending || emptyDraft);
+      setAddOpen(!!pending);
+      setLogoutPrompt(false);
+      setTab(0);
+      setFilter(null);
+      history.replaceState({ tab: 0, add: !!pending }, '');
+    }
+    previousKey.current = key;
+  }, [key]);
+  useEffect(() => {
+    let active = true;
+    async function receive() {
+      const url = new URL(location.href);
+      const payment = await readPaymentLink(url);
+      if (!active || url.href !== location.href || !payment || !acceptPaymentLink(payment)) return;
+      finishScreenTransition();
+      setDraft(payment.draft);
+      setDraftRevision(revision => revision + 1);
+      setTab(0);
+      setAddOpen(true);
+      addDialog.current?.scrollTo(0, 0);
+    }
+    const receiveVisible = () => { if (!document.hidden) void receive(); };
+    void receive();
+    window.addEventListener('pageshow', receive);
+    document.addEventListener('visibilitychange', receiveVisible);
+    return () => {
+      active = false;
+      window.removeEventListener('pageshow', receive);
+      document.removeEventListener('visibilitychange', receiveVisible);
+    };
+  }, []);
   useEffect(() => { if (key && data && tab === 0) void finance.loadMonths([month]); }, [key, !!data, tab, month, finance.loadMonths]);
-  useEffect(() => { if (key && data) { try { sessionStorage.removeItem('pending-payment'); } catch { /* Optional draft persistence. */ } } }, [key, !!data]);
+  useEffect(() => { if (key && data && addOpen) forgetPendingPayment(); }, [key, !!data, addOpen, draft]);
   function navigate(next: number, search = false) { transitionScreen(() => { history.pushState({ tab: next }, '', location.pathname); setTab(next); setCompact(false); if (search) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Поиск трат"]')?.focus()); window.scrollTo({ top: 0, behavior: 'instant' }); }); }
   function openAdd() { finishScreenTransition(); history.pushState({ tab, add: true }, '', location.pathname); setAddOpen(true); }
   useEffect(() => {
@@ -84,7 +119,7 @@ export default function App() {
     </>}</main>
     <div className="navigation"><nav className="bottom-nav material" aria-label="Основная навигация" style={{ '--active-tab': tab } as React.CSSProperties}><i className="nav-indicator" aria-hidden="true"/>{tabs.map((t, i) => <button key={t.name} aria-label={t.name} aria-current={tab === i ? 'page' : undefined} onClick={() => navigate(i)}><Icon name={t.icon}/><span>{t.name}</span></button>)}</nav><button className="add-button" aria-label="Добавить расход" title="Добавить расход (N)" onClick={openAdd}><Icon name="plus"/><span>Добавить</span></button></div>
   </div>
-    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><h1>Новый расход</h1></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add data={data} draft={draft} save={finance.save} money={money}/></div></div>}
+    {data && <div hidden={!addOpen} className="add-backdrop"><div ref={addDialog} className="add-dialog scroll-surface" role="dialog" aria-modal="true" aria-label="Добавить расход" inert={!!duplicate}><div className="add-toolbar material" data-drag-handle><button className="icon-button" aria-label="Закрыть добавление" title="Закрыть добавление" onClick={closeAdd}><Icon name="back"/></button><h1>Новый расход</h1></div><div className="motion-edge" aria-hidden="true" data-edge-handle/><Add key={draftRevision} data={data} draft={draft} save={finance.save} money={money}/></div></div>}
     {logoutPrompt && <div className="modal-backdrop"><div ref={dialog} role="dialog" aria-modal="true" aria-label="Выход с очередью" className="modal"><h2 data-drag-handle>В очереди {queue.length} записей</h2><p>Очередь останется зашифрованной на этом устройстве. Она откроется при следующем входе в этот аккаунт. Очистка данных сайта уничтожит эти записи.</p><button className="primary" onClick={cancelDialog}>Остаться</button><button className="danger-action" onClick={() => void logout()}>Выйти и защитить очередь</button></div></div>}
     <div className="feedback-stack" ref={setFeedbackHost}>
     <Presence>{toast && <div role="status" className="toast"><Icon name="check"/>{toast}</div>}</Presence>
